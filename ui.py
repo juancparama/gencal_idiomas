@@ -8,7 +8,7 @@ import threading
 from db import read_clases, test_connection
 from calendario import generar_calendario
 from sharepoint import GraphDelegatedClient
-from utils import load_festivos, save_festivos, exportar_calendario
+from utils import load_festivos, save_festivos, exportar_calendario, cargar_calendario
 from config import SP_CLIENT_ID, SP_TENANT_ID, USER_EMAIL, SP_SITE_HOST, SP_SITE_PATH, SP_LIST_NAME, SP_DATE_FIELD, CONSULTA, OUTPUT_FILE, COLORS
 
 # Set appearance mode and color theme
@@ -135,7 +135,7 @@ class SharePointSyncApp(ctk.CTk):
         status_frame.grid(row=0, column=2, padx=20, pady=10, sticky="e")
         
         # Database status
-        ctk.CTkLabel(status_frame, text="DB:", font=ctk.CTkFont(size=12)).pack(side="left", padx=2)
+        ctk.CTkLabel(status_frame, text="BD:", font=ctk.CTkFont(size=12)).pack(side="left", padx=2)
         self.db_status = ctk.CTkLabel(status_frame, text="●", text_color=COLORS['error'], 
                                      font=ctk.CTkFont(size=16))
         self.db_status.pack(side="left", padx=2)
@@ -170,6 +170,9 @@ class SharePointSyncApp(ctk.CTk):
         
         # Holiday Configuration Section
         self.create_holiday_section()
+
+        # Logs Section
+        self.create_log_section()
     
     def create_conexiones_section(self):
         """Create connections test section"""
@@ -200,79 +203,50 @@ class SharePointSyncApp(ctk.CTk):
                                         command=self.authenticate_sharepoint)
         self.test_sp_btn.pack(side="left", padx=5)
             
-    
-    # def create_database_section(self):
-    #     """Create database configuration section"""
-    #     db_section = ctk.CTkFrame(self.config_frame)
-    #     db_section.pack(fill="x", padx=10, pady=(0,10))
-        
-    #     # Section header
-    #     ctk.CTkLabel(db_section, text="Database Settings", 
-    #                 font=ctk.CTkFont(size=16, weight="bold")).pack(pady=(10,5))
-        
-    #     # Connection string
-    #     ctk.CTkLabel(db_section, text="Connection String:", 
-    #                 font=ctk.CTkFont(size=12)).pack(anchor="w", padx=10)
-    #     self.conn_textbox = ctk.CTkTextbox(db_section, height=80)
-    #     self.conn_textbox.pack(fill="x", padx=10, pady=5)
-    #     self.conn_textbox.insert("1.0", f"Server={os.getenv("DB_SERVER")}\nDatabase={os.getenv("DB_NAME")}")
-        
-    #     # Test connection button
-    #     self.test_conn_btn = ctk.CTkButton(db_section, text="Prueba de conexión BD", 
-    #                                       fg_color=COLORS['success'], hover_color="#27AE60",
-    #                                       command=self.test_database_connection)
-    #     self.test_conn_btn.pack(pady=(5,10))
-    
-    # def create_sharepoint_section(self):
-    #     """Create SharePoint configuration section"""
-    #     sp_section = ctk.CTkFrame(self.config_frame)
-    #     sp_section.pack(fill="x", padx=10, pady=(0,10))
-        
-    #     # Section header
-    #     ctk.CTkLabel(sp_section, text="Configuración Sharepoint", 
-    #                 font=ctk.CTkFont(size=16, weight="bold")).pack(pady=(10,5))
-        
-    #     # SharePoint URL
-    #     ctk.CTkLabel(sp_section, text="URL lista Sharepoint:", 
-    #                 font=ctk.CTkFont(size=12)).pack(anchor="w", padx=10)
-    #     self.sp_url_entry = ctk.CTkEntry(sp_section, placeholder_text="https://tenant.sharepoint.com/sites/...")
-    #     self.sp_url_entry.pack(fill="x", padx=10, pady=5)
-        
-    #     # Authentication button
-    #     self.auth_btn = ctk.CTkButton(sp_section, text="Test SharePoint Auth", 
-    #                                  fg_color=COLORS['success'], hover_color="#27AE60",
-    #                                  command=self.authenticate_sharepoint)
-    #     self.auth_btn.pack(pady=(5,10))
-
 
     def create_fechas_section(self):
         """Crear sección para definir las fechas del calendario"""
-        fechas_section = ctk.CTkFrame(self.config_frame)
-        fechas_section.pack(fill="x", padx=10, pady=(0,10), expand=True)
-        
+        fechas_section = ctk.CTkFrame(
+            self.config_frame,
+            border_width=2,          # grosor del borde
+            border_color="gray",     # color del borde
+            corner_radius=10,        # esquinas redondeadas
+            fg_color="transparent"   # transparente para que resalte el borde
+        )
+        fechas_section.pack(fill="x", padx=10, pady=(0, 10), expand=True)
+
         # Section header
-        ctk.CTkLabel(fechas_section, text="Fechas del calendario", 
-                    font=ctk.CTkFont(size=16, weight="bold")).pack(pady=(10,5))
-        
+        ctk.CTkLabel(
+            fechas_section,
+            text="Fechas del calendario",
+            font=ctk.CTkFont(size=16, weight="bold")
+        ).pack(pady=(10, 5))
+
         # Add fechas controls
         add_frame = ctk.CTkFrame(fechas_section, fg_color="transparent")
         add_frame.pack(fill="x", padx=10, pady=5)
 
         self.start_entry = ctk.CTkLabel(add_frame, text="Fecha inicio")
-        self.start_entry.pack(side="left", fill="x", expand=True, padx=(0,5))
+        self.start_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
         self.start_picker = DateEntry(add_frame, date_pattern="yyyy-mm-dd")
         self.start_picker.delete(0, "end")
-        self.start_picker.pack(side="left", fill="x", expand=True, padx=(0,5))
+        self.start_picker.pack(side="left", fill="x", expand=True, padx=(0, 5))
 
         self.end_entry = ctk.CTkLabel(add_frame, text="Fecha fin")
-        self.end_entry.pack(side="left", fill="x", expand=True, padx=(0,5))
+        self.end_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
         self.end_picker = DateEntry(add_frame, date_pattern="yyyy-mm-dd")
         self.end_picker.delete(0, "end")
-        self.end_picker.pack(side="left", fill="x", expand=True, padx=(0,5))
-    
+        self.end_picker.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        
     def create_holiday_section(self):
         """Create holiday configuration section"""
-        holiday_section = ctk.CTkFrame(self.config_frame)
+        holiday_section = ctk.CTkFrame(
+            self.config_frame,
+            border_width=2,          # Border thickness
+            border_color="gray",     # Border color
+            corner_radius=10,        # Rounded corners
+            fg_color="transparent"   # Transparent background to highlight the border
+            )
         holiday_section.pack(fill="x", padx=10, pady=(0,10), expand=True)
         
         # Section header
@@ -309,8 +283,41 @@ class SharePointSyncApp(ctk.CTk):
         ctk.CTkButton(preset_frame, text="Borrar todos", width=80, height=28,
                      fg_color=COLORS['error'], hover_color="#C0392B",
                      command=self.clear_holidays).pack(side="right", padx=2)
+        
+        
+    def create_log_section(self):
+        """Crear visor de logs en el panel lateral"""
+        log_section = ctk.CTkFrame(
+            self.config_frame,
+            border_width=2,
+            border_color="gray",
+            corner_radius=10,
+            fg_color="transparent"
+        )
+        log_section.pack(fill="both", padx=10, pady=(0, 10), expand=True)
+
+        ctk.CTkLabel(
+            log_section,
+            text="Visor de logs",
+            font=ctk.CTkFont(size=16, weight="bold")
+        ).pack(pady=(10, 5), anchor="w")
+
+        # Aquí guardamos directamente el textbox
+        self.txt_log = ctk.CTkTextbox(
+            log_section,
+            width=300,
+            height=150,
+            wrap="word"
+        )
+        self.txt_log.pack(fill="both", expand=True, padx=10, pady=(0, 10))
     
-    
+    def log(self, msg: str):
+        """Añadir mensaje al visor lateral de logs"""
+        from time import strftime
+        ts = strftime("%H:%M:%S")
+        self.txt_log.insert("end", f"[{ts}] {msg}\n")
+        self.txt_log.see("end")
+                  
     def create_main_content(self):
         """Create the main content area"""
         self.main_frame = ctk.CTkFrame(self, corner_radius=10)
@@ -403,7 +410,7 @@ class SharePointSyncApp(ctk.CTk):
         left_frame = ctk.CTkFrame(action_frame, fg_color="transparent")
         left_frame.pack(side="left", pady=10)
         
-        self.generate_btn = ctk.CTkButton(left_frame, text="Generate Calendar", 
+        self.generate_btn = ctk.CTkButton(left_frame, text="Generar calendario", 
                                          width=150, height=40, font=ctk.CTkFont(size=14),
                                          command=self.generate_calendar)
         self.generate_btn.pack(side="left", padx=5)
@@ -414,17 +421,17 @@ class SharePointSyncApp(ctk.CTk):
                                         command=self.export_cal)
         self.export_btn.pack(side="left", padx=5)
         
-        self.preview_btn = ctk.CTkButton(left_frame, text="Preview Changes", 
+        self.preview_btn = ctk.CTkButton(left_frame, text="Cargar calendario", 
                                         width=150, height=40, fg_color=COLORS['warning'], 
                                         hover_color="#E67E22", font=ctk.CTkFont(size=14),
-                                        command=self.preview_changes)
+                                        command=self.load_cal)
         self.preview_btn.pack(side="left", padx=5)
         
         # Right side button
         right_frame = ctk.CTkFrame(action_frame, fg_color="transparent")
         right_frame.pack(side="right", pady=10)
         
-        self.sync_btn = ctk.CTkButton(right_frame, text="Sync to SharePoint", 
+        self.sync_btn = ctk.CTkButton(right_frame, text="Subir a SharePoint", 
                                      width=180, height=40, fg_color=COLORS['success'], 
                                      hover_color="#27AE60", font=ctk.CTkFont(size=14, weight="bold"),
                                      command=self.sync_to_sharepoint)
@@ -665,18 +672,20 @@ class SharePointSyncApp(ctk.CTk):
             messagebox.showinfo("Sin datos.", "Por favor, genera primero el calendario de clases")
             return        
                  
-    def preview_changes(self):
+    def load_cal(self):
         """Preview changes that will be made to SharePoint"""
-        if not self.class_data:
-            messagebox.showinfo("Sin datos.", "Por favor, genera primero el calendario de clases")
+        # if not self.class_data:
+        #     messagebox.showinfo("Sin datos.", "Por favor, genera primero el calendario de clases")
+        #     return
+        
+        self.calendar_df = cargar_calendario()
+        if self.calendar_df is None or self.calendar_df.empty:
+            messagebox.showerror("Error", "No se pudo cargar el calendario desde el fichero Excel.")
             return
-        
-        # Show preview dialog
-        preview_text = f"Sincronizar {len(self.class_data)} registros a SharePoint\n"
-        preview_text += "Esta acción eliminará todos los registros y los reemplazará con los nuevos datos."
-        
-        dialog = ConfirmDialog(self, "Previsualización de cambios", preview_text)
-        self.wait_window(dialog)
+        self.update_status("Calendario cargado desde fichero Excel")
+        self.logs.append(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Calendario cargado desde fichero Excel")
+        self.log("Calendario cargado desde fichero Excel")
+        self.load_sample_data()  # Cargar los datos para la vista previa                
     
     def sync_to_sharepoint(self):
         """Sync data to SharePoint"""
@@ -829,23 +838,50 @@ class SharePointSyncApp(ctk.CTk):
             self.logs.append(f"La lista '{SP_LIST_NAME}' contiene actualmente {item_count} elementos.")
 
         return sid, lid
-    
-    def add_log(self, message):
-        """Add a message to logs"""
+
+
+
+    def add_log(self, message: str):
+        """Añadir mensaje al buffer y (si existe) al visor"""
+        # Asegurar que la lista exista
+        if not hasattr(self, "logs"):
+            self.logs = []
+
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        self.logs.append(f"{timestamp} - {message}")
-    
+        entry = f"{timestamp} - {message}"
+        self.logs.append(entry)
+
+        # Si el visor ya está creado, lo actualizamos en el hilo de la UI
+        if hasattr(self, "log_box") and self.log_box is not None:
+            # Garantiza seguridad si add_log se llama desde otro hilo
+            self.after(0, lambda e=entry: self._append_to_log_box(e))
+
+
+    def _append_to_log_box(self, log: str):
+        """Insertar texto en el textbox de logs"""
+        if not hasattr(self, "log_box") or self.log_box is None:
+            return
+        self.log_box.configure(state="normal")
+        self.log_box.insert("end", log + "\n")
+        self.log_box.see("end")
+        self.log_box.configure(state="disabled")
+
+
     def show_logs(self):
-        """Show application logs"""
+        """Mostrar logs en una ventana aparte (solo lectura)"""
         log_window = ctk.CTkToplevel(self)
         log_window.title("Application Logs")
         log_window.geometry("600x400")
-        
-        log_text = ctk.CTkTextbox(log_window)
+
+        log_text = ctk.CTkTextbox(log_window, wrap="word")
         log_text.pack(fill="both", expand=True, padx=10, pady=10)
 
-        for log in self.logs:
+        # Volcar todo el buffer
+        log_text.configure(state="normal")
+        for log in getattr(self, "logs", []):
             log_text.insert("end", log + "\n")
+        log_text.see("end")
+        log_text.configure(state="disabled")
                 
     
     def update_status(self, message):

@@ -1,5 +1,7 @@
 import json
 from pathlib import Path
+
+import pandas as pd
 from config import FESTIVOS_JSON
 import tkinter as tk
 from tkinter import filedialog
@@ -59,6 +61,26 @@ def exportar_calendario(df):
     if filepath:  # Si el usuario no cancela
         df.to_excel(filepath, index=False)
         print(f"Calendario guardado en: {filepath}")
+
+def cargar_calendario():
+    """Carga un calendario desde un archivo Excel."""
+    root = tk.Tk()
+    root.withdraw()  # Oculta la ventana principal
+
+    filepath = filedialog.askopenfilename(
+        title="Seleccionar archivo de calendario",
+        filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
+    )
+
+    if filepath:
+        try:
+            df = pd.read_excel(filepath)
+            print(f"Calendario cargado desde: {filepath}")
+            return df
+        except Exception as e:
+            print(f"Error al cargar el calendario: {e}")
+            return None
+    return None
 
 def load_festivos():
     p = Path(FESTIVOS_JSON)
