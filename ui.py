@@ -286,7 +286,7 @@ class SharePointSyncApp(ctk.CTk):
         
         
     def create_log_section(self):
-        """Crear visor de logs en el panel lateral"""
+        """Crear visor de logs en el panel de configuración"""
         log_section = ctk.CTkFrame(
             self.config_frame,
             border_width=2,
@@ -300,23 +300,57 @@ class SharePointSyncApp(ctk.CTk):
             log_section,
             text="Visor de logs",
             font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(pady=(10, 5), anchor="w")
+        ).pack(pady=(10, 5))
 
-        # Aquí guardamos directamente el textbox
         self.txt_log = ctk.CTkTextbox(
             log_section,
             width=300,
             height=150,
+            state="disabled",
             wrap="word"
         )
         self.txt_log.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-    
-    def log(self, msg: str):
-        """Añadir mensaje al visor lateral de logs"""
-        from time import strftime
-        ts = strftime("%H:%M:%S")
-        self.txt_log.insert("end", f"[{ts}] {msg}\n")
+
+        # Inicializar buffer si no existe
+        if not hasattr(self, "logs"):
+            self.logs = []
+
+        # Volcar logs anteriores si los hay
+        for entry in self.logs:
+            self._append_to_log_box(entry)
+
+
+    # ------------------------------
+    # FUNCIÓN AUXILIAR PARA ACTUALIZAR EL TEXTBOX
+    # ------------------------------
+    def _append_to_log_box(self, entry: str):
+        """Insertar texto en el visor lateral"""
+        if not hasattr(self, "txt_log") or self.txt_log is None:
+            return
+        self.txt_log.configure(state="normal")
+        self.txt_log.insert("end", entry + "\n")
         self.txt_log.see("end")
+        self.txt_log.configure(state="disabled")
+
+
+    # ------------------------------
+    # FUNCIÓN PRINCIPAL DE LOGS
+    # ------------------------------
+    def log(self, message: str):
+        """Añadir un mensaje a la lista de logs y actualizar visor"""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        entry = f"{timestamp} - {message}"
+
+        # Guardar en histórico
+        if not hasattr(self, "logs"):
+            self.logs = []
+        self.logs.append(entry)  # ✅ añadir directamente
+
+        # Actualizar visor lateral si existe
+        if hasattr(self, "txt_log") and self.txt_log is not None:
+            # Garantiza que se ejecute en el hilo de la UI
+            self.after(0, lambda e=entry: self._append_to_log_box(e))
+
                   
     def create_main_content(self):
         """Create the main content area"""
@@ -462,15 +496,15 @@ class SharePointSyncApp(ctk.CTk):
     
     def test_database_connection(self):
         """Test database connection"""
-        self.logs.append(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Testing database connection")
+        self.log(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Testing database connection")
         if test_connection():
             self.update_status("Probando la conexión a la base de datos...")
-            self.logs.append(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Database connection successful")                        
+            self.log(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Database connection successful")                        
             self.progress_bar.set(0.3)                    
             self.after(1000, self._complete_db_test)
         else:
             self.update_status("Error al conectar a la base de datos")
-            self.logs.append(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Database connection failed")
+            self.log(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Database connection failed")
             messagebox.showerror("Connection Error", "Failed to connect to the database.")
     
     def _complete_db_test(self):
@@ -483,7 +517,7 @@ class SharePointSyncApp(ctk.CTk):
     def authenticate_sharepoint(self):
         """Authenticate with SharePoint"""
         self.update_status("Authenticating with SharePoint...")
-        self.logs.append(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Authenticating with SharePoint")        
+        self.log(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Authenticating with SharePoint")        
         self.progress_bar.set(0.5)
 
         def on_auth_complete():
@@ -498,7 +532,7 @@ class SharePointSyncApp(ctk.CTk):
                 if result[0] and result[1]:  # Si tenemos site_id y list_id
                     self.after(0, on_auth_complete)  # Ejecutar en el hilo principal
             except Exception as e:
-                self.logs.append(f"Error en autenticación: {str(e)}")
+                self.log(f"Error en autenticación: {str(e)}")
         
         threading.Thread(target=run, daemon=True).start()
       
@@ -609,16 +643,16 @@ class SharePointSyncApp(ctk.CTk):
     
     def generate_calendar(self):
         """Generate calendar from database"""
-        self.logs.append(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Testing database connection")
+        self.log(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Testing database connection")
         try:
             self.update_status("Probando la conexión a la base de datos...")
             if test_connection():
-                self.logs.append(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Database connection successful")                        
+                self.log(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Database connection successful")                        
                 self.progress_bar.set(0.3)                    
                 self.after(1000, self._complete_db_test)            
         except RuntimeError as e:
             self.update_status("Error al conectar a la base de datos")
-            self.logs.append(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Error al conectar a la BD: {str(e)}")
+            self.log(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Error al conectar a la BD: {str(e)}")
             messagebox.showerror("Error de conexión.", f"Fallo de conexión a la BD: {str(e)}")
             return
 
@@ -645,7 +679,7 @@ class SharePointSyncApp(ctk.CTk):
             pass
         else:
             self.update_status("Generando calendario desde la base de datos...")
-            self.logs.append(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Generando calendario")
+            self.log(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Generando calendario")
             self.progress_bar.set(0.2)            
             self.after(1500, self._complete_calendar_generation)        
         
@@ -655,7 +689,7 @@ class SharePointSyncApp(ctk.CTk):
         self.load_sample_data()
         n_registros = len(self.calendar_df) if self.calendar_df is not None else 0
         self.update_status("Calendario generado correctamente")
-        self.logs.append(
+        self.log(
             f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Calendario generado correctamente ({n_registros} registros)"
         )
         self.progress_bar.set(0)
@@ -665,7 +699,7 @@ class SharePointSyncApp(ctk.CTk):
         if self.calendar_df is not None and not self.calendar_df.empty:
             exportar_calendario(self.calendar_df)
             self.update_status("Calendario exportado correctamente a Excel")
-            self.logs.append(
+            self.log(
                 f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Calendario exportado correctamente a {OUTPUT_FILE}."
             )
         else:
@@ -683,7 +717,7 @@ class SharePointSyncApp(ctk.CTk):
             messagebox.showerror("Error", "No se pudo cargar el calendario desde el fichero Excel.")
             return
         self.update_status("Calendario cargado desde fichero Excel")
-        self.logs.append(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Calendario cargado desde fichero Excel")
+        # self.log(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Calendario cargado desde fichero Excel")
         self.log("Calendario cargado desde fichero Excel")
         self.load_sample_data()  # Cargar los datos para la vista previa                
     
@@ -816,26 +850,26 @@ class SharePointSyncApp(ctk.CTk):
 
     def resolve_site_list(self):
         site_graph_id = f"{SP_SITE_HOST}:{SP_SITE_PATH}"
-        self.logs.append(f"Resolviendo Site por ruta {site_graph_id}...")
+        self.log(f"Resolviendo Site por ruta {site_graph_id}...")
         g = self.ensure_graph()
         sid = g.get_site_id_by_path(site_graph_id)
 
         if not sid:
-            self.logs.append("No se pudo resolver site_id")
+            self.log("No se pudo resolver site_id")
             return None, None
         
         lid = g.get_list_id_by_name(sid, SP_LIST_NAME)
         if not lid:
-            self.logs.append(f"No se encontró la lista '{SP_LIST_NAME}'")
+            self.log(f"No se encontró la lista '{SP_LIST_NAME}'")
             return sid, None
         
         self.app_state["site_id"], self.app_state["list_id"] = sid, lid
-        self.logs.append(f"Conectado. SiteID={sid} | ListID={lid}")
+        self.log(f"Conectado. SiteID={sid} | ListID={lid}")
 
          # Obtener y mostrar el número de items
         item_count = g.get_list_item_count(sid, lid)
         if item_count != -1:            
-            self.logs.append(f"La lista '{SP_LIST_NAME}' contiene actualmente {item_count} elementos.")
+            self.log(f"La lista '{SP_LIST_NAME}' contiene actualmente {item_count} elementos.")
 
         return sid, lid
 
@@ -849,26 +883,29 @@ class SharePointSyncApp(ctk.CTk):
 
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         entry = f"{timestamp} - {message}"
-        self.logs.append(entry)
+        self.log(entry)
 
         # Si el visor ya está creado, lo actualizamos en el hilo de la UI
-        if hasattr(self, "log_box") and self.log_box is not None:
+        if hasattr(self, "log_box") and self.txt_log is not None:
             # Garantiza seguridad si add_log se llama desde otro hilo
             self.after(0, lambda e=entry: self._append_to_log_box(e))
 
 
-    def _append_to_log_box(self, log: str):
-        """Insertar texto en el textbox de logs"""
-        if not hasattr(self, "log_box") or self.log_box is None:
-            return
-        self.log_box.configure(state="normal")
-        self.log_box.insert("end", log + "\n")
-        self.log_box.see("end")
-        self.log_box.configure(state="disabled")
+    # def _append_to_log_box(self, log: str):
+    #     """Insertar texto en el textbox de logs"""
+    #     if not hasattr(self, "log_box") or self.log_box is None:
+    #         return
+    #     self.log_box.configure(state="normal")
+    #     self.log_box.insert("end", log + "\n")
+    #     self.log_box.see("end")
+    #     self.log_box.configure(state="disabled")
 
 
+    # ------------------------------
+    # OPCIONAL: MOSTRAR LOGS EN VENTANA APARTE
+    # ------------------------------
     def show_logs(self):
-        """Mostrar logs en una ventana aparte (solo lectura)"""
+        """Mostrar todos los logs en una ventana aparte"""
         log_window = ctk.CTkToplevel(self)
         log_window.title("Application Logs")
         log_window.geometry("600x400")
@@ -876,13 +913,12 @@ class SharePointSyncApp(ctk.CTk):
         log_text = ctk.CTkTextbox(log_window, wrap="word")
         log_text.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # Volcar todo el buffer
         log_text.configure(state="normal")
-        for log in getattr(self, "logs", []):
-            log_text.insert("end", log + "\n")
+        for entry in self.logs:
+            log_text.insert("end", entry + "\n")
         log_text.see("end")
         log_text.configure(state="disabled")
-                
+                    
     
     def update_status(self, message):
         """Update status bar message"""
