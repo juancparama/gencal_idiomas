@@ -17,3 +17,20 @@ OUTPUT_FILE = os.getenv("OUTPUT_FILE", "calendario_clases.xlsx")
 
 # JSON festivos
 FESTIVOS_JSON = os.getenv("FESTIVOS_JSON", "festivos.json")
+
+# Configuración de SharePoint
+SP_CLIENT_ID = os.getenv("SP_CLIENT_ID")
+SP_TENANT_ID = os.getenv("SP_TENANT_ID")
+USER_EMAIL = os.getenv("USER_EMAIL")
+SP_SITE_HOST = os.getenv("SP_SITE_HOST")
+SP_SITE_PATH = os.getenv("SP_SITE_PATH")
+SP_LIST_NAME = os.getenv("SP_LIST_NAME", "CalendarioClases")
+SP_DATE_FIELD = os.getenv("SP_DATE_FIELD", "Fecha")
+
+COLORS = {    
+    'success': "#229150",
+    'warning': '#F39C12', 
+    'error': '#E74C3C',
+    'info': '#3498DB',
+    'neutral': '#95A5A6'
+}

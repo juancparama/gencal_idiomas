@@ -4,6 +4,23 @@ import urllib
 from sqlalchemy import create_engine
 from config import DB_SERVER, DB_NAME, DB_USER, DB_PASSWORD
 
+def test_connection():
+    """Prueba la conexión a la base de datos."""
+    params = urllib.parse.quote_plus(
+        f"DRIVER={{SQL Server}};"
+        f"SERVER={DB_SERVER};"
+        f"DATABASE={DB_NAME};"
+        f"UID={DB_USER};PWD={DB_PASSWORD}"
+    )
+    engine = create_engine(f"mssql+pyodbc:///?odbc_connect={params}")
+    try:
+        with engine.connect() as conn:
+            print("Conexión exitosa a la base de datos.")
+        return True
+    except Exception as e:
+        raise RuntimeError(f"Error al conectar a la base de datos: {e}")
+        
+
 def read_clases(sql_query: str) -> pd.DataFrame:
     """Lee datos desde SQL Server usando pandas y SQLAlchemy."""
     if not sql_query:

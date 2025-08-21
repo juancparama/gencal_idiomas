@@ -1,7 +1,8 @@
-from ui import build_ui
+from ui import SharePointSyncApp
 
 def main():
-    app = build_ui()
+    """Main application entry point"""
+    app = SharePointSyncApp()
     app.mainloop()
 
 if __name__ == "__main__":

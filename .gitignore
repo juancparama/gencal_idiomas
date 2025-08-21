@@ -2,6 +2,7 @@
 *.csv
 test.py
 test_sp.py
+*.bin
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
