@@ -5,26 +5,18 @@ import tkinter as tk
 from tkcalendar import DateEntry
 from tkinter import messagebox
 import threading
-from db import read_clases, test_connection
-from calendario import generar_calendario
+from db import test_connection
+
 from sharepoint import GraphDelegatedClient
-from utils import load_festivos, save_festivos, exportar_calendario, cargar_calendario
-from config import SP_CLIENT_ID, SP_TENANT_ID, USER_EMAIL, SP_SITE_HOST, SP_SITE_PATH, SP_LIST_NAME, SP_DATE_FIELD, CONSULTA, OUTPUT_FILE, COLORS
+from utils import load_festivos
+from config import SP_CLIENT_ID, SP_TENANT_ID, USER_EMAIL, SP_SITE_HOST, SP_SITE_PATH, SP_LIST_NAME, COLORS
 
 from ui.components.dialogs import ConfirmDialog
-
 from ui.components.header import Header
-
 from ui.components.config_panel import ConfigPanel
-from ui.components.conexiones_panel import ConexionesPanel
-from ui.components.fechas_panel import FechasPanel
-from ui.components.holiday_panel import HolidayPanel
 from ui.components.calendar_manager import CalendarManager
-from ui.components.log_panel import LogPanel
 from ui.components.main_panel import MainPanel
 from ui.components.statusbar_panel import StatusBar
-
-
 from ui.utils.log_manager import LogManager
 
 

@@ -3,6 +3,7 @@
 test.py
 test_sp.py
 *.bin
+festivos.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
