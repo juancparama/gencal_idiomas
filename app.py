@@ -2,10 +2,7 @@ import os
 import customtkinter as ctk
 from datetime import datetime, date
 import tkinter as tk
-from tkcalendar import DateEntry
 from tkinter import messagebox
-import threading
-from db import test_connection
 
 from utils import load_festivos
 from config import SP_CLIENT_ID, SP_TENANT_ID, USER_EMAIL, SP_SITE_HOST, SP_SITE_PATH, SP_LIST_NAME, COLORS
@@ -16,6 +13,7 @@ from ui.components.config_panel import ConfigPanel
 from ui.components.calendar_manager import CalendarManager
 from ui.components.main_panel import MainPanel
 from ui.components.statusbar_panel import StatusBar
+from ui.components.db_manager import DatabaseManager
 from ui.components.sharepoint_manager import SharePointManager
 from ui.utils.log_manager import LogManager
 
@@ -32,6 +30,7 @@ class SharePointSyncApp(ctk.CTk):
         self.logs = []
 
         self.log_manager = LogManager(self)
+        self.db_manager = DatabaseManager(self)
         self.calendar_manager = CalendarManager(self)
         self.sp_manager = SharePointManager(self)
 
@@ -55,7 +54,7 @@ class SharePointSyncApp(ctk.CTk):
         # Initialize data
         self.holidays = load_festivos()
         self.class_data = []
-        self.db_connected = False
+        # self.db_connected = False
         # self.sp_authenticated = False
         
         # Create UI components
@@ -83,25 +82,8 @@ class SharePointSyncApp(ctk.CTk):
     # Event handlers and business logic methods
     def test_database_connection(self):
         """Test database connection"""
-        self.log(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Testing database connection")
-        if test_connection():
-            self.update_status("Probando la conexión a la base de datos...")
-            self.log(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Database connection successful")                        
-            self.status_bar.set_progress(0.3)                    
-            self.after(1000, self._complete_db_test)
-        else:
-            self.update_status("Error al conectar a la base de datos")
-            self.log(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Database connection failed")
-            messagebox.showerror("Connection Error", "Failed to connect to the database.")
-    
-    def _complete_db_test(self):
-        """Complete database connection test"""
-        self.db_connected = True
-        self.header.db_status.configure(text_color=COLORS['success'])
-        self.update_status("Conexión a la base de datos correcta")
-        self.status_bar.set_progress(0)
-    
-    
+        self.db_manager.test_connection()
+        
     def generate_calendar(self):
         self.calendar_manager.generate_calendar()
     
@@ -138,45 +120,6 @@ class SharePointSyncApp(ctk.CTk):
 
         self.main_panel.refresh_data_grid()
         
-    
-    def refresh_data_grid(self):
-        """Refresh the data grid display"""
-        # Clear existing rows
-        for widget in self.data_rows_frame.winfo_children():
-            widget.destroy()
-        
-        # Add data rows
-        for i, row_data in enumerate(self.class_data):
-            self.create_data_row(row_data, i)
-        
-        # Update record count
-        # self.record_count_label.configure(text=f"Registros: {len(self.class_data)}")
-    
-    def create_data_row(self, row_data, row_index):
-        """Create a single data row"""
-        row_frame = ctk.CTkFrame(self.data_rows_frame, 
-                                fg_color="gray20" if row_index % 2 == 0 else "gray15",
-                                height=35)
-        row_frame.pack(fill="x", pady=1)
-        
-        # row_frame.grid_columnconfigure(tuple(range(len(row_data))), weight=1)
-        
-         # Filtrar solo las columnas que queremos mostrar (primeras 7 columnas)
-        filtered_data = row_data[:7]
-
-        # Configurar el mismo peso para todas las columnas
-        for i in range(len(self.headers)):
-            row_frame.grid_columnconfigure(i, weight=1)
-        
-        # Crear las etiquetas con ancho fijo y alineación consistente
-        for i, data in enumerate(filtered_data):
-            label = ctk.CTkLabel(row_frame, 
-                                text=str(data), 
-                                font=ctk.CTkFont(size=12),
-                                anchor="center",  # Centrar el texto
-                                justify="center"  # Justificación central
-            )
-            label.grid(row=0, column=i, padx=5, pady=5, sticky="nsew")  # sticky="nsew" para expandir en todas direcciones
         
     def update_status(self, message: str):
         """Update status bar message"""

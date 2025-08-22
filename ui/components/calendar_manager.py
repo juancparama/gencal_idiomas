@@ -1,55 +1,61 @@
 import customtkinter as ctk
-from datetime import datetime, timedelta
+from datetime import datetime
 from tkinter import messagebox
 from config import OUTPUT_FILE, CONSULTA
 from utils import exportar_calendario, cargar_calendario
-from db import test_connection, read_clases
+from services.calendar_service import CalendarService
 import pandas as pd
-
 
 class CalendarManager:
     def __init__(self, app):
+        """
+        Initialize calendar manager
+        Args:
+            app: Main application instance
+        """
         self.app = app
-        self.calendar_df = None
+        self.calendar_service = CalendarService(
+            self.app.db_manager.db_service,
+            log_callback=self.app.log
+        )
 
     def generate_calendar(self):
-        """Generate calendar from database"""
-        self.app.log(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Testing database connection")
+        """Generate calendar with UI feedback"""
         try:
-            self.app.update_status("Probando la conexión a la base de datos...")
-            if test_connection():
-                self.app.log(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Database connection successful")                        
-                self.app.progress_bar.set(0.3)                    
-                self.app.after(1000, self.app._complete_db_test)            
-        except RuntimeError as e:
-            self.app.update_status("Error al conectar a la base de datos")
-            self.app.log(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Error al conectar a la BD: {str(e)}")
-            messagebox.showerror("Error de conexión.", f"Fallo de conexión a la BD: {str(e)}")
-            return
+            # Verificar conexión BD
+            self.app.db_manager.test_connection()
+            
+            # Obtener fechas
+            start_str, end_str = self.app.fechas_panel.get_dates()
+            if not start_str or not end_str:
+                messagebox.showerror("Fechas requeridas", 
+                                   "Debes introducir fecha inicio y fecha fin")
+                return
 
-        start_str, end_str = self.app.fechas_panel.get_dates()
+            # Convertir fechas
+            sd = datetime.strptime(start_str, "%Y-%m-%d")
+            ed = datetime.strptime(end_str, "%Y-%m-%d")
 
-        if not start_str or not end_str:
-            messagebox.showerror("Fechas requeridas", "Debes introducir fecha inicio y fecha fin")
-            return
-
-        # Si hay valores, convertirlos
-        sd = datetime.strptime(start_str, "%Y-%m-%d").date()
-        ed = datetime.strptime(end_str, "%Y-%m-%d").date()
-
-        if sd > ed:
-            messagebox.showerror("Error", "La fecha inicio debe ser anterior o igual a fecha fin.")
-            return
-
-        self.app.calendar_df = generar_calendario(sd, ed, festivos=self.app.holidays)
-        
-        if self.app.calendar_df is None:
-            pass
-        else:
+            # Generar calendario
             self.app.update_status("Generando calendario desde la base de datos...")
             self.app.log(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Generando calendario")
-            self.app.progress_bar.set(0.2)            
+            self.app.status_bar.set_progress(0.2)
+
+            self.app.calendar_df = self.calendar_service.generate_calendar(
+                start_date=sd,
+                end_date=ed,
+                sql_query=CONSULTA,
+                festivos=self.app.holidays
+            )
+
+            # Completar generación
             self.app.after(1500, self._complete_calendar_generation)
+
+        except Exception as e:
+            self.app.update_status("Error al generar calendario")
+            self.app.log(f"Error: {str(e)}")
+            messagebox.showerror("Error", str(e))
+            self.app.status_bar.set_progress(0)
 
     def _complete_calendar_generation(self):
         """Complete calendar generation"""
@@ -59,7 +65,7 @@ class CalendarManager:
         self.app.log(
             f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Calendario generado correctamente ({n_registros} registros)"
         )
-        self.app.progress_bar.set(0)
+        self.app.status_bar.set_progress(0)
 
     def export_cal(self):
         """Export calendar to Excel"""
@@ -82,64 +88,3 @@ class CalendarManager:
         self.app.update_status("Calendario cargado desde fichero Excel")
         self.app.log("Calendario cargado desde fichero Excel")
         self.app.load_sample_data()
-
-def generar_calendario(start_date, end_date, festivos=None):
-    """Genera un calendario de clases entre dos fechas, excluyendo festivos."""
-
-    try:
-        sd = start_date
-        ed = end_date        
-        if sd > ed:
-            messagebox.showerror("Error", "La fecha inicio debe ser anterior o igual a fecha fin.")
-            return
-
-        sql = CONSULTA
-        df = read_clases(sql_query=sql)
-        if df.empty:
-            messagebox.showwarning("Atención", "La consulta no devolvió filas.")
-            return
-
-        df_out = generate_calendar_from_df(df, sd, ed, festivos)        
-
-        return df_out
-        # respuesta = messagebox.askyesno(
-        #     "Éxito",
-        #     "Calendario generado correctamente.\n\nAccede a Power Automate y ejecuta el flujo 'Generar calendario de idiomas' para completar el proceso.\n\n¿Deseas acceder ahora?"
-        # )
-        # if respuesta:
-        #     webbrowser.open("https://make.powerautomate.com/environments/Default-37cd273a-1cec-4aae-a297-41480ea54f8d/flows/79f9731a-8a31-4d61-9529-f749f2ac723d/details")
-        # messagebox.showinfo("Éxito", f"Calendario generado en '{OUTPUT_FILE}' ({len(df_out)} registros).")
-
-    except Exception as e:
-        messagebox.showerror("Error", str(e))
-
-def generate_calendar_from_df(df_clases, start_date, end_date, festivos=None):
-    festivos_set = set(festivos or [])
-    rows = []
-    start = pd.to_datetime(start_date).normalize()
-    end = pd.to_datetime(end_date).normalize()
-
-    for _, r in df_clases.iterrows():
-        dia = int(r["Dia"])  # 1..5: lunes a viernes
-        current = start
-        while current <= end:
-            if current.isoweekday() == dia and current.strftime("%Y-%m-%d") not in festivos_set:                
-                base_date = pd.Timestamp('1900-01-01')
-                numero_dia = (current - base_date).days + 2
-                titulo = f"{r['PERNR']}-{numero_dia}"
-                rows.append({
-                    "Título": titulo,
-                    "PERNR": r["PERNR"],
-                    "Nombre": r["Nombre"],
-                    "Mail": r["Mail"],
-                    "Fecha": current.strftime("%Y-%m-%d"),
-                    "Grupo": r["Grupo"],
-                    "Idioma": r["Idioma"],
-                    "Estado": "Pendiente",
-                    "Aviso24h": "",
-                    "Comentarios": ""
-                })
-            current += timedelta(days=1)
-
-    df_out = pd.DataFrame(rows, columns=["Título","PERNR","Nombre","Mail","Fecha","Grupo","Idioma","Estado","Aviso24h","Comentarios"])
-    return df_out
