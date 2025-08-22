@@ -26,8 +26,7 @@ class CalendarManager:
             messagebox.showerror("Error de conexión.", f"Fallo de conexión a la BD: {str(e)}")
             return
 
-        start_str = self.app.start_picker.get().strip()
-        end_str = self.app.end_picker.get().strip()
+        start_str, end_str = self.app.fechas_panel.get_dates()
 
         if not start_str or not end_str:
             messagebox.showerror("Fechas requeridas", "Debes introducir fecha inicio y fecha fin")

@@ -18,6 +18,7 @@ class HolidayPanel(ctk.CTkFrame):
         self.holidays = app.holidays  # Referencia a la lista de festivos
         
         self.setup_holiday_panel()
+        self.refresh_holiday_list()
         
     def setup_holiday_panel(self):
         """Create holiday configuration section"""
