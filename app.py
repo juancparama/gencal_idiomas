@@ -7,7 +7,6 @@ from tkinter import messagebox
 import threading
 from db import test_connection
 
-from sharepoint import GraphDelegatedClient
 from utils import load_festivos
 from config import SP_CLIENT_ID, SP_TENANT_ID, USER_EMAIL, SP_SITE_HOST, SP_SITE_PATH, SP_LIST_NAME, COLORS
 
@@ -17,6 +16,7 @@ from ui.components.config_panel import ConfigPanel
 from ui.components.calendar_manager import CalendarManager
 from ui.components.main_panel import MainPanel
 from ui.components.statusbar_panel import StatusBar
+from ui.components.sharepoint_manager import SharePointManager
 from ui.utils.log_manager import LogManager
 
 
@@ -33,15 +33,13 @@ class SharePointSyncApp(ctk.CTk):
 
         self.log_manager = LogManager(self)
         self.calendar_manager = CalendarManager(self)
+        self.sp_manager = SharePointManager(self)
 
         # Estado compartido        
         self.app_state = {
             "festivos": load_festivos(),
             "df_out": None,
-            "dates": (None, None),
-            "graph": None,
-            "site_id": None,
-            "list_id": None,
+            "dates": (None, None),                                    
         }
         
         # Window configuration
@@ -58,7 +56,7 @@ class SharePointSyncApp(ctk.CTk):
         self.holidays = load_festivos()
         self.class_data = []
         self.db_connected = False
-        self.sp_authenticated = False
+        # self.sp_authenticated = False
         
         # Create UI components
         self.header = Header(self, self)
@@ -104,39 +102,6 @@ class SharePointSyncApp(ctk.CTk):
         self.status_bar.set_progress(0)
     
     
-    def authenticate_sharepoint(self):
-        """Authenticate with SharePoint"""
-        self.update_status("Authenticating with SharePoint...")
-        self.log(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Authenticating with SharePoint")        
-        self.status_bar.set_progress(0.5)
-
-        def on_auth_complete():
-            """Callback para cuando la autenticación es exitosa"""
-            self.status_bar.set_progress(0.3)                    
-            self.after(1000, self._complete_sp_auth)
-
-        def run():            
-            try:
-                self.ensure_graph()
-                result = self.resolve_site_list()
-                if result[0] and result[1]:  # Si tenemos site_id y list_id
-                    self.after(0, on_auth_complete)  # Ejecutar en el hilo principal
-            except Exception as e:
-                self.log(f"Error en autenticación: {str(e)}")
-        
-        threading.Thread(target=run, daemon=True).start()
-      
-        
-        # Simulate authentication
-        # self.after(2000, self._complete_sp_auth)
-    
-    def _complete_sp_auth(self):
-        """Complete SharePoint authentication"""
-        self.sp_authenticated = True
-        self.header.sp_status.configure(text_color=COLORS['success'])
-        self.update_status("SharePoint authentication successful")
-        self.status_bar.set_progress(0)
-    
     def generate_calendar(self):
         self.calendar_manager.generate_calendar()
     
@@ -148,40 +113,12 @@ class SharePointSyncApp(ctk.CTk):
     
     def load_cal(self):
         self.calendar_manager.load_cal()
-           
+    
+    def authenticate_sharepoint(self):
+        self.sp_manager.authenticate()
+
     def sync_to_sharepoint(self):
-        """Sync data to SharePoint"""
-        if not self.sp_authenticated:
-            messagebox.showwarning("Sin autentificar.", "Por favor, autentifícate primero en Sharepoint")
-            return
-        
-        if not self.class_data:
-            messagebox.showinfo("Sin datos.", "Por favor, genera primero el calendario de clases")
-            return
-        
-        # Confirmation dialog
-        dialog = ConfirmDialog(self, "Confirmar acción", 
-                              "Esta acción ELIMINARÁ todos los datos de la lista SharePoint y los reemplazará con el nuevo calendario. ¿Deseas continuar?",
-                              self._perform_sync)
-        self.wait_window(dialog)
-    
-    def _perform_sync(self):
-        """Perform the actual sync operation"""
-        self.update_status("Syncing to SharePoint...")
-        self.status_bar.set_progress(0.1)
-        
-        # Simulate sync process
-        for i in range(10):
-            self.after(i * 200, lambda p=i: self.status_bar.set_progress((p + 1) / 10))
-        
-        self.after(2000, self._complete_sync)
-    
-    def _complete_sync(self):
-        """Complete sync operation"""
-        self.header.last_sync_label.configure(text=f"Last sync: {datetime.now().strftime('%H:%M:%S')}")
-        self.update_status("Sync completed successfully")
-        self.status_bar.set_progress(0)
-        messagebox.showinfo("Sync Complete", "Data has been successfully synced to SharePoint")
+        self.sp_manager.sync_to_sharepoint()
     
     def filter_data(self):
         """Filter data based on date range"""
@@ -240,46 +177,7 @@ class SharePointSyncApp(ctk.CTk):
                                 justify="center"  # Justificación central
             )
             label.grid(row=0, column=i, padx=5, pady=5, sticky="nsew")  # sticky="nsew" para expandir en todas direcciones
-    
-    # ---- SharePoint helpers compartidos ----
-    def ensure_graph(self):
-        """Ensure graph client is initialized"""
-        if self.app_state["graph"] is None:
-            # Pasar la función add_log en lugar de la lista logs
-            self.app_state["graph"] = GraphDelegatedClient(
-                SP_CLIENT_ID, 
-                SP_TENANT_ID, 
-                USER_EMAIL, 
-                self.log
-            )
-        return self.app_state["graph"]
-
-    def resolve_site_list(self):
-        site_graph_id = f"{SP_SITE_HOST}:{SP_SITE_PATH}"
-        self.log(f"Resolviendo Site por ruta {site_graph_id}...")
-        g = self.ensure_graph()
-        sid = g.get_site_id_by_path(site_graph_id)
-
-        if not sid:
-            self.log("No se pudo resolver site_id")
-            return None, None
         
-        lid = g.get_list_id_by_name(sid, SP_LIST_NAME)
-        if not lid:
-            self.log(f"No se encontró la lista '{SP_LIST_NAME}'")
-            return sid, None
-        
-        self.app_state["site_id"], self.app_state["list_id"] = sid, lid
-        self.log(f"Conectado. SiteID={sid} | ListID={lid}")
-
-         # Obtener y mostrar el número de items
-        item_count = g.get_list_item_count(sid, lid)
-        if item_count != -1:            
-            self.log(f"La lista '{SP_LIST_NAME}' contiene actualmente {item_count} elementos.")
-
-        return sid, lid
-
-    
     def update_status(self, message: str):
         """Update status bar message"""
         self.status_bar.update_status(message)

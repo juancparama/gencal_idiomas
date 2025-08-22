@@ -1,15 +1,87 @@
-import atexit
 import os
-import msal
+
 import requests
-import json
-import time
+import msal
 import webbrowser
+import json
+
+from config import (
+    SP_CLIENT_ID, 
+    SP_TENANT_ID, 
+    USER_EMAIL, 
+    SP_SITE_HOST, 
+    SP_SITE_PATH, 
+    SP_LIST_NAME
+)
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 SCOPES = ["Sites.ReadWrite.All"]
-TOKEN_CACHE_FILE = "token_cache.bin" # File to store the token cache
+TOKEN_CACHE_FILE = "token_cache.bin"
 
+class SharePointService:
+    def __init__(self, log_callback=None):
+        self.log_fn = log_callback or (lambda x: None)
+        self._graph = None
+        self._site_id = None
+        self._list_id = None
+        self.client = None
+        
+    @property
+    def is_authenticated(self):
+        return self.client is not None and self.client.token is not None
+        
+    def initialize(self):
+        """Initialize Graph client"""
+        if self.client is None:
+            self.client = GraphDelegatedClient(
+                SP_CLIENT_ID,
+                SP_TENANT_ID,
+                USER_EMAIL,
+                self.log_fn
+            )
+        return self.client
+        
+    def authenticate(self):
+        """Authenticate and resolve site/list"""
+        try:
+            self.initialize()
+            return self.resolve_site_and_list()
+        except Exception as e:
+            self.log_fn(f"Error en autenticación: {str(e)}")
+            return False
+            
+    def resolve_site_and_list(self):
+        """Resolve SharePoint site and list IDs"""
+        site_graph_id = f"{SP_SITE_HOST}:{SP_SITE_PATH}"
+        self.log_fn(f"Resolviendo Site por ruta {site_graph_id}...")
+        
+        self._site_id = self.client.get_site_id_by_path(site_graph_id)
+        if not self._site_id:
+            self.log_fn("No se pudo resolver site_id")
+            return False
+            
+        self._list_id = self.client.get_list_id_by_name(self._site_id, SP_LIST_NAME)
+        if not self._list_id:
+            self.log_fn(f"No se encontró la lista '{SP_LIST_NAME}'")
+            return False
+            
+        self.log_fn(f"Conectado. SiteID={self._site_id} | ListID={self._list_id}")
+        
+        # Get item count
+        item_count = self.client.get_list_item_count(self._site_id, self._list_id)
+        if item_count != -1:
+            self.log_fn(f"La lista '{SP_LIST_NAME}' contiene actualmente {item_count} elementos.")
+            
+        return True
+
+    def sync_data(self, data):
+        """Sync data to SharePoint list"""
+        if not all([self.client, self._site_id, self._list_id]):
+            raise ValueError("SharePoint not properly initialized")
+            
+        # TODO: Implement actual sync using self.client
+        return True
+    
 class GraphDelegatedClient:
     """
     Cliente para interactuar con Microsoft Graph API usando flujo de autenticación delegada (device flow).
