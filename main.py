@@ -1,4 +1,4 @@
-from app import SharePointSyncApp
+from ui.main_window import SharePointSyncApp
 
 def main():
     """Main application entry point"""

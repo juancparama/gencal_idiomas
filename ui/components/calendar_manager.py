@@ -1,55 +1,53 @@
-import customtkinter as ctk
+# File: ui/components/calendar_manager.py
 from datetime import datetime
 from tkinter import messagebox
 from config import OUTPUT_FILE, CONSULTA
-from utils import exportar_calendario, cargar_calendario
 from services.calendar_service import CalendarService
-import pandas as pd
+from services.excel_service import exportar_calendario, cargar_calendario
+
 
 class CalendarManager:
     def __init__(self, app):
         """
-        Initialize calendar manager
-        Args:
-            app: Main application instance
+        Componente que conecta la UI con los servicios de calendario.
         """
         self.app = app
-        self.calendar_service = CalendarService(
-            self.app.db_manager.db_service,
+        self.service = CalendarService(
+            db_service=self.app.db_manager.db_service,
             log_callback=self.app.log
         )
 
     def generate_calendar(self):
-        """Generate calendar with UI feedback"""
+        """Generar calendario desde la BD"""
         try:
-            # Verificar conexión BD
+            # Verificar conexión a la BD
             self.app.db_manager.test_connection()
-            
-            # Obtener fechas
-            start_str, end_str = self.app.fechas_panel.get_dates()
+
+            # Obtener fechas desde UI
+            start_str, end_str = self.app.config_panel.fechas_panel.get_dates()
             if not start_str or not end_str:
-                messagebox.showerror("Fechas requeridas", 
-                                   "Debes introducir fecha inicio y fecha fin")
+                messagebox.showerror("Fechas requeridas",
+                                     "Debes introducir fecha inicio y fecha fin")
                 return
 
             # Convertir fechas
-            sd = datetime.strptime(start_str, "%Y-%m-%d")
-            ed = datetime.strptime(end_str, "%Y-%m-%d")
+            start = datetime.strptime(start_str, "%Y-%m-%d")
+            end = datetime.strptime(end_str, "%Y-%m-%d")
 
-            # Generar calendario
+            # Mostrar feedback
             self.app.update_status("Generando calendario desde la base de datos...")
-            self.app.log(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Generando calendario")
             self.app.status_bar.set_progress(0.2)
 
-            self.app.calendar_df = self.calendar_service.generate_calendar(
-                start_date=sd,
-                end_date=ed,
+            # Llamar al servicio
+            self.app.calendar_df = self.service.generate_calendar(
+                start_date=start,
+                end_date=end,
                 sql_query=CONSULTA,
                 festivos=self.app.holidays
             )
 
             # Completar generación
-            self.app.after(1500, self._complete_calendar_generation)
+            self.app.after(1000, self._complete_calendar_generation)
 
         except Exception as e:
             self.app.update_status("Error al generar calendario")
@@ -58,33 +56,36 @@ class CalendarManager:
             self.app.status_bar.set_progress(0)
 
     def _complete_calendar_generation(self):
-        """Complete calendar generation"""
-        self.app.load_sample_data()
+        """Finalizar la generación y refrescar UI"""
         n_registros = len(self.app.calendar_df) if self.app.calendar_df is not None else 0
+        self.app.load_sample_data()
         self.app.update_status("Calendario generado correctamente")
         self.app.log(
-            f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Calendario generado correctamente ({n_registros} registros)"
+            f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - "
+            f"Calendario generado correctamente ({n_registros} registros)"
         )
         self.app.status_bar.set_progress(0)
 
     def export_cal(self):
-        """Export calendar to Excel"""
+        """Exportar calendario a Excel"""
         if self.app.calendar_df is not None and not self.app.calendar_df.empty:
-            exportar_calendario(self.app.calendar_df)
-            self.app.update_status("Calendario exportado correctamente a Excel")
-            self.app.log(
-                f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Calendario exportado correctamente a {OUTPUT_FILE}."
-            )
+            filepath = exportar_calendario(self.app.calendar_df)
+            if filepath:
+                self.app.update_status(f"Calendario exportado a {filepath}")
+                self.app.log(
+                    f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - "
+                    f"Calendario exportado correctamente a {filepath}."
+                )
         else:
-            messagebox.showinfo("Sin datos.", "Por favor, genera primero el calendario de clases")
-            return
+            messagebox.showinfo("Sin datos", "Por favor, genera primero el calendario de clases")
 
     def load_cal(self):
-        """Preview changes that will be made to SharePoint"""
-        self.app.calendar_df = cargar_calendario()
-        if self.app.calendar_df is None or self.app.calendar_df.empty:
+        """Cargar calendario desde Excel"""
+        df = cargar_calendario()
+        if df is None or df.empty:
             messagebox.showerror("Error", "No se pudo cargar el calendario desde el fichero Excel.")
             return
+        self.app.calendar_df = df
         self.app.update_status("Calendario cargado desde fichero Excel")
         self.app.log("Calendario cargado desde fichero Excel")
         self.app.load_sample_data()

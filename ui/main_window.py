@@ -1,11 +1,8 @@
-import os
+# File: ui/main_window.py
 import customtkinter as ctk
-from datetime import datetime, date
 import tkinter as tk
-from tkinter import messagebox
 
-from utils import load_festivos
-from config import SP_CLIENT_ID, SP_TENANT_ID, USER_EMAIL, SP_SITE_HOST, SP_SITE_PATH, SP_LIST_NAME, COLORS
+from services.holiday_service import load_festivos
 
 from ui.components.dialogs import ConfirmDialog
 from ui.components.header import Header
@@ -22,7 +19,6 @@ from ui.utils.log_manager import LogManager
 ctk.set_appearance_mode("dark")  # "light", "dark", "system"
 ctk.set_default_color_theme("dark-blue")  # "blue", "green", "dark-blue"
 
-
 class SharePointSyncApp(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -33,13 +29,6 @@ class SharePointSyncApp(ctk.CTk):
         self.db_manager = DatabaseManager(self)
         self.calendar_manager = CalendarManager(self)
         self.sp_manager = SharePointManager(self)
-
-        # Estado compartido        
-        self.app_state = {
-            "festivos": load_festivos(),
-            "df_out": None,
-            "dates": (None, None),                                    
-        }
         
         # Window configuration
         self.title("Calendario de clases de idiomas")
@@ -58,7 +47,7 @@ class SharePointSyncApp(ctk.CTk):
         # self.sp_authenticated = False
         
         # Create UI components
-        self.header = Header(self, self)
+        self.header = Header(self, self)        
         self.config_panel = ConfigPanel(self, self)
         self.main_panel = MainPanel(self, self)
         self.status_bar = StatusBar(self, self)
@@ -131,6 +120,6 @@ class SharePointSyncApp(ctk.CTk):
             width = self.winfo_width()
             if width < 1200:
                 # Adjust layout for smaller windows
-                self.config_frame.configure(width=300)
+                self.config_panel.configure(width=300)
             else:
-                self.config_frame.configure(width=350)
+                self.config_panel.configure(width=350)

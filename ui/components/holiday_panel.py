@@ -1,9 +1,10 @@
+# File: ui/components/holiday_panel.py
 import customtkinter as ctk
 from datetime import datetime
 from tkcalendar import DateEntry
 from tkinter import messagebox
 from config import COLORS
-from utils import save_festivos
+from services.holiday_service import save_festivos
 
 class HolidayPanel(ctk.CTkFrame):
     def __init__(self, parent, app):
