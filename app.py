@@ -11,72 +11,27 @@ from sharepoint import GraphDelegatedClient
 from utils import load_festivos, save_festivos, exportar_calendario, cargar_calendario
 from config import SP_CLIENT_ID, SP_TENANT_ID, USER_EMAIL, SP_SITE_HOST, SP_SITE_PATH, SP_LIST_NAME, SP_DATE_FIELD, CONSULTA, OUTPUT_FILE, COLORS
 
+from ui.components.dialogs import ConfirmDialog
+from ui.components.header import Header
+from ui.components.holiday_panel import HolidayPanel
+from ui.components.calendar_manager import CalendarManager
+from ui.utils.log_manager import LogManager
+
+
+
 # Set appearance mode and color theme
 ctk.set_appearance_mode("dark")  # "light", "dark", "system"
 ctk.set_default_color_theme("dark-blue")  # "blue", "green", "dark-blue"
 
-# Custom colors for status indicators
-# COLORS = {
-#     # 'success': '#2ECC71',
-#     'success': "#229150",
-#     'warning': '#F39C12', 
-#     'error': '#E74C3C',
-#     'info': '#3498DB',
-#     'neutral': '#95A5A6'
-# }
-
-class ConfirmDialog(ctk.CTkToplevel):
-    def __init__(self, parent, title, message, callback=None):
-        super().__init__(parent)
-        self.title(title)
-        self.geometry("400x200")
-        self.transient(parent)
-        self.callback = callback
-        self.result = False
-        
-        # Center the dialog
-        self.geometry("+%d+%d" % (parent.winfo_rootx() + 50, parent.winfo_rooty() + 50))
-        
-        # Message
-        ctk.CTkLabel(self, text=message, wraplength=350, font=ctk.CTkFont(size=14)).pack(pady=20)
-        
-        # Buttons
-        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.pack(pady=10)
-        
-        cancel_btn = ctk.CTkButton(btn_frame, text="Cancel", command=self.on_cancel)
-        cancel_btn.pack(side="left", padx=10)
-        
-        confirm_btn = ctk.CTkButton(btn_frame, text="Confirm", fg_color=COLORS['error'], 
-                                   hover_color="#C0392B", command=self.on_confirm)
-        confirm_btn.pack(side="right", padx=10)
-        
-        self.after(10, self._set_grab)
-    
-    def _set_grab(self):
-        """Set window grab after ensuring window is visible"""
-        try:
-            self.grab_set()
-            self.focus_set()
-        except tk.TclError:
-            # If grab still fails, try again after a short delay
-            self.after(50, self._set_grab)
-
-    def on_cancel(self):
-        self.result = False
-        self.destroy()
-    
-    def on_confirm(self):
-        self.result = True
-        if self.callback:
-            self.callback()
-        self.destroy()
 
 class SharePointSyncApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.calendar_df = None
         self.logs = []
+
+        self.log_manager = LogManager(self)
+        self.calendar_manager = CalendarManager(self)
 
         # Estado compartido        
         self.app_state = {
@@ -109,9 +64,6 @@ class SharePointSyncApp(ctk.CTk):
         self.create_config_panel()
         self.create_main_content()
         self.create_status_bar()
-
-        # Mostrar los festivos cargados
-        self.refresh_holiday_list()
         
         # Bind window resize event
         self.bind("<Configure>", self.on_window_resize)
@@ -120,36 +72,8 @@ class SharePointSyncApp(ctk.CTk):
         self.load_sample_data()
     
     def create_header(self):
-        """Create the header frame with status indicators"""
-        self.header_frame = ctk.CTkFrame(self, height=50, corner_radius=10)
-        self.header_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=(10,5))
-        self.header_frame.grid_columnconfigure(1, weight=1)
-        
-        # App title
-        title_label = ctk.CTkLabel(self.header_frame, text="Calendario de clases de idiomas", 
-                                  font=ctk.CTkFont(size=20, weight="bold"))
-        title_label.grid(row=0, column=0, padx=20, pady=10, sticky="w")
-        
-        # Status indicators frame
-        status_frame = ctk.CTkFrame(self.header_frame, fg_color="transparent")
-        status_frame.grid(row=0, column=2, padx=20, pady=10, sticky="e")
-        
-        # Database status
-        ctk.CTkLabel(status_frame, text="BD:", font=ctk.CTkFont(size=12)).pack(side="left", padx=2)
-        self.db_status = ctk.CTkLabel(status_frame, text="●", text_color=COLORS['error'], 
-                                     font=ctk.CTkFont(size=16))
-        self.db_status.pack(side="left", padx=2)
-        
-        # SharePoint status
-        ctk.CTkLabel(status_frame, text="SP:", font=ctk.CTkFont(size=12)).pack(side="left", padx=(10,2))
-        self.sp_status = ctk.CTkLabel(status_frame, text="●", text_color=COLORS['error'], 
-                                     font=ctk.CTkFont(size=16))
-        self.sp_status.pack(side="left", padx=2)
-        
-        # Last sync time
-        self.last_sync_label = ctk.CTkLabel(status_frame, text="Last sync: Never", 
-                                           font=ctk.CTkFont(size=12))
-        self.last_sync_label.pack(side="left", padx=(20,0))
+        """Create the header with status indicators"""
+        self.header = Header(self, self)
     
     def create_config_panel(self):
         """Create the configuration panel (left sidebar)"""
@@ -159,12 +83,6 @@ class SharePointSyncApp(ctk.CTk):
         # Sección de conexiones
         self.create_conexiones_section()
         
-        # # Database Settings Section
-        # self.create_database_section()
-
-        # # SharePoint Settings Section
-        # self.create_sharepoint_section()
-
         # Database Settings Section
         self.create_fechas_section()
         
@@ -240,49 +158,8 @@ class SharePointSyncApp(ctk.CTk):
         
     def create_holiday_section(self):
         """Create holiday configuration section"""
-        holiday_section = ctk.CTkFrame(
-            self.config_frame,
-            border_width=2,          # Border thickness
-            border_color="gray",     # Border color
-            corner_radius=10,        # Rounded corners
-            fg_color="transparent"   # Transparent background to highlight the border
-            )
-        holiday_section.pack(fill="x", padx=10, pady=(0,10), expand=True)
-        
-        # Section header
-        ctk.CTkLabel(holiday_section, text="Configuración de festivos", 
-                    font=ctk.CTkFont(size=16, weight="bold")).pack(pady=(10,5))
-        
-        # Add holiday controls
-        add_frame = ctk.CTkFrame(holiday_section, fg_color="transparent")
-        add_frame.pack(fill="x", padx=10, pady=5)
-
-        self.holiday_entry = DateEntry(add_frame, date_pattern="dd/MM/yyyy")
-        self.holiday_entry.pack(side="left", fill="x", expand=True, padx=(0,5))
-        
-        # self.holiday_entry = ctk.CTkEntry(add_frame, placeholder_text="YYYY-MM-DD")
-        # self.holiday_entry.pack(side="left", fill="x", expand=True, padx=(0,5))
-        
-        add_btn = ctk.CTkButton(add_frame, text="Add", width=60, height=28,
-                               command=self.add_holiday)
-        add_btn.pack(side="right")
-        
-        # Holiday list
-        ctk.CTkLabel(holiday_section, text="Listado de festivos:", 
-                    font=ctk.CTkFont(size=12)).pack(anchor="w", padx=10, pady=(10,0))
-        
-        self.holiday_list_frame = ctk.CTkScrollableFrame(holiday_section, height=250)
-        self.holiday_list_frame.pack(fill="both", expand=True, padx=10, pady=(5,10))
-        
-        # Quick presets
-        preset_frame = ctk.CTkFrame(holiday_section, fg_color="transparent")
-        preset_frame.pack(fill="x", padx=10, pady=(0,10))
-        
-        ctk.CTkButton(preset_frame, text="Añadir festivos nacionales", width=120, height=28,
-                     command=self.add_es_holidays).pack(side="left", padx=2)
-        ctk.CTkButton(preset_frame, text="Borrar todos", width=80, height=28,
-                     fg_color=COLORS['error'], hover_color="#C0392B",
-                     command=self.clear_holidays).pack(side="right", padx=2)
+        self.holiday_panel = HolidayPanel(self.config_frame, self)
+        self.holiday_panel.refresh_holiday_list()  # Llamar al refresh aquí
         
         
     def create_log_section(self):
@@ -311,45 +188,21 @@ class SharePointSyncApp(ctk.CTk):
         )
         self.txt_log.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
-        # Inicializar buffer si no existe
-        if not hasattr(self, "logs"):
-            self.logs = []
+        # Configurar el widget en el log_manager
+        self.log_manager.set_log_widget(self.txt_log)
 
-        # Volcar logs anteriores si los hay
-        for entry in self.logs:
-            self._append_to_log_box(entry)
-
-
-    # ------------------------------
-    # FUNCIÓN AUXILIAR PARA ACTUALIZAR EL TEXTBOX
-    # ------------------------------
-    def _append_to_log_box(self, entry: str):
-        """Insertar texto en el visor lateral"""
-        if not hasattr(self, "txt_log") or self.txt_log is None:
-            return
-        self.txt_log.configure(state="normal")
-        self.txt_log.insert("end", entry + "\n")
-        self.txt_log.see("end")
-        self.txt_log.configure(state="disabled")
-
+        # Si hay logs anteriores, mostrarlos
+        for entry in self.log_manager.logs:
+            self.log_manager._append_to_log_box(entry)
 
     # ------------------------------
     # FUNCIÓN PRINCIPAL DE LOGS
     # ------------------------------
     def log(self, message: str):
-        """Añadir un mensaje a la lista de logs y actualizar visor"""
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        entry = f"{timestamp} - {message}"
+        self.log_manager.log(message)
 
-        # Guardar en histórico
-        if not hasattr(self, "logs"):
-            self.logs = []
-        self.logs.append(entry)  # ✅ añadir directamente
-
-        # Actualizar visor lateral si existe
-        if hasattr(self, "txt_log") and self.txt_log is not None:
-            # Garantiza que se ejecute en el hilo de la UI
-            self.after(0, lambda e=entry: self._append_to_log_box(e))
+    def show_logs(self):
+        self.log_manager.show_logs()
 
                   
     def create_main_content(self):
@@ -421,12 +274,6 @@ class SharePointSyncApp(ctk.CTk):
         # Configurar el mismo peso para todas las columnas
         for i in range(len(self.headers)):
             header_frame.grid_columnconfigure(i, weight=1)
-
-        # header_frame.grid_columnconfigure(tuple(range(len(self.headers))), weight=1)
-        
-        # for i, header in enumerate(self.headers):
-        #     ctk.CTkLabel(header_frame, text=header, font=ctk.CTkFont(weight="bold")).grid(
-        #         row=0, column=i, padx=5, pady=8, sticky="w")
 
         for i, header in enumerate(self.headers):
             ctk.CTkLabel(header_frame, text=header, 
@@ -510,7 +357,7 @@ class SharePointSyncApp(ctk.CTk):
     def _complete_db_test(self):
         """Complete database connection test"""
         self.db_connected = True
-        self.db_status.configure(text_color=COLORS['success'])
+        self.header.db_status.configure(text_color=COLORS['success'])
         self.update_status("Conexión a la base de datos correcta")
         self.progress_bar.set(0)
     
@@ -543,184 +390,22 @@ class SharePointSyncApp(ctk.CTk):
     def _complete_sp_auth(self):
         """Complete SharePoint authentication"""
         self.sp_authenticated = True
-        self.sp_status.configure(text_color=COLORS['success'])
+        self.header.sp_status.configure(text_color=COLORS['success'])
         self.update_status("SharePoint authentication successful")
         self.progress_bar.set(0)
-
-
-    def add_holiday(self):
-        """Add a holiday to the list"""
-        holiday_date = self.holiday_entry.get().strip()  # Esto viene en DD/MM/YYYY
-
-        if holiday_date:
-            try:
-                # Parsear DD/MM/YYYY a datetime
-                fecha_obj = datetime.strptime(holiday_date, "%d/%m/%Y")
-                # Convertir a YYYY-MM-DD para guardar
-                holiday_iso = fecha_obj.strftime("%Y-%m-%d")
-
-                if holiday_iso not in self.holidays:
-                    self.holidays.append(holiday_iso)
-                    self.holiday_entry.delete(0, 'end')
-                    self.refresh_holiday_list()
-                    save_festivos(self.holidays)
-                    self.update_status(f"Añadido festivo: {holiday_date}") 
-            except ValueError:
-                messagebox.showerror("Fecha inválida", "Por favor, introduce una fecha en formato DD/MM/AAAA")
-
-    
-    def refresh_holiday_list(self):
-        """Refresh the holiday list display"""
-        # Clear existing items
-        for widget in self.holiday_list_frame.winfo_children():
-            widget.destroy()
-        
-        # Add holiday items
-        for i, holiday in enumerate(sorted(self.holidays)):
-            item_frame = ctk.CTkFrame(self.holiday_list_frame, fg_color="gray20" if i % 2 == 0 else "gray15")
-            item_frame.pack(fill="x", pady=1)
-
-            # Convertir YYYY-MM-DD → DD/MM/YYYY
-            try:
-                fecha_obj = datetime.strptime(holiday, "%Y-%m-%d")
-                fecha_str = fecha_obj.strftime("%d/%m/%Y")
-            except ValueError:
-                fecha_str = holiday  # fallback por si hay un valor raro
-            ctk.CTkLabel(item_frame, text=fecha_str).pack(side="left", padx=10, pady=5)
-            
-            # ctk.CTkLabel(item_frame, text=holiday).pack(side="left", padx=10, pady=5)
-            
-            remove_btn = ctk.CTkButton(item_frame, text="×", width=30, height=25,
-                                      fg_color=COLORS['error'], hover_color="#C0392B",
-                                      command=lambda h=holiday: self.remove_holiday(h))
-            remove_btn.pack(side="right", padx=5, pady=2)
-    
-    def remove_holiday(self, holiday):
-        """Remove a holiday from the list"""
-        if holiday in self.holidays:
-            self.holidays.remove(holiday)
-            self.refresh_holiday_list()
-            save_festivos(self.holidays)
-            self.update_status(f"Eliminado festivo: {holiday}")
-    
-    def add_es_holidays(self):
-        """Add common ES holidays"""
-        es_holidays = [
-            ("01-01", "Año Nuevo"),
-            ("01-06", "Reyes Magos"),
-            ("05-01", "Día del Trabajo"),
-            ("08-15", "Asunción"),
-            ("10-12", "Hispanidad"),
-            ("11-01", "Todos los Santos"),
-            ("12-06", "Constitución"),
-            ("12-08", "Inmaculada"),
-            ("12-25", "Navidad")
-        ]
-
-        # Obtener año actual
-        current_year = datetime.now().year
-
-        added = False
-        for date, _ in es_holidays:
-            full_date = f"{current_year}-{date}"
-            if full_date not in self.holidays:
-                self.holidays.append(full_date)
-                added = True
-
-        if added:
-            self.refresh_holiday_list()
-            save_festivos(self.holidays)
-            self.update_status("Añadidos festivos nacionales para el año actual")                     
-    
-    def clear_holidays(self):
-        """Clear all holidays"""
-        if self.holidays:
-            self.holidays.clear()
-            self.refresh_holiday_list()
-            save_festivos(self.holidays)  # Guardar cambios
-            self.update_status("Eliminados todos los festivos")
-    
     
     def generate_calendar(self):
-        """Generate calendar from database"""
-        self.log(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Testing database connection")
-        try:
-            self.update_status("Probando la conexión a la base de datos...")
-            if test_connection():
-                self.log(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Database connection successful")                        
-                self.progress_bar.set(0.3)                    
-                self.after(1000, self._complete_db_test)            
-        except RuntimeError as e:
-            self.update_status("Error al conectar a la base de datos")
-            self.log(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Error al conectar a la BD: {str(e)}")
-            messagebox.showerror("Error de conexión.", f"Fallo de conexión a la BD: {str(e)}")
-            return
-
-        start_str = self.start_picker.get().strip()
-        end_str   = self.end_picker.get().strip()
-
-        if not start_str or not end_str:
-            messagebox.showerror("Fechas requeridas", "Debes introducir fecha inicio y fecha fin")
-            return  # 👈 salir de la función para obligar al usuario
-        
-        # Si hay valores, convertirlos
-        sd = datetime.strptime(start_str, "%Y-%m-%d").date()
-        ed = datetime.strptime(end_str, "%Y-%m-%d").date()
-
-        # sd, ed = self.start_picker.get_date(), self.end_picker.get_date()
-
-        if sd > ed: 
-            messagebox.showerror("Error", "La fecha inicio debe ser anterior o igual a fecha fin.")
-            return
-
-        self.calendar_df = generar_calendario(sd, ed, festivos=self.holidays)
-        
-        if self.calendar_df is None:
-            pass
-        else:
-            self.update_status("Generando calendario desde la base de datos...")
-            self.log(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Generando calendario")
-            self.progress_bar.set(0.2)            
-            self.after(1500, self._complete_calendar_generation)        
-        
+        self.calendar_manager.generate_calendar()
     
     def _complete_calendar_generation(self):
-        """Complete calendar generation"""
-        self.load_sample_data()
-        n_registros = len(self.calendar_df) if self.calendar_df is not None else 0
-        self.update_status("Calendario generado correctamente")
-        self.log(
-            f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Calendario generado correctamente ({n_registros} registros)"
-        )
-        self.progress_bar.set(0)
-
-    def export_cal(self):
-        """Export calendar to Excel"""
-        if self.calendar_df is not None and not self.calendar_df.empty:
-            exportar_calendario(self.calendar_df)
-            self.update_status("Calendario exportado correctamente a Excel")
-            self.log(
-                f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Calendario exportado correctamente a {OUTPUT_FILE}."
-            )
-        else:
-            messagebox.showinfo("Sin datos.", "Por favor, genera primero el calendario de clases")
-            return        
-                 
-    def load_cal(self):
-        """Preview changes that will be made to SharePoint"""
-        # if not self.class_data:
-        #     messagebox.showinfo("Sin datos.", "Por favor, genera primero el calendario de clases")
-        #     return
-        
-        self.calendar_df = cargar_calendario()
-        if self.calendar_df is None or self.calendar_df.empty:
-            messagebox.showerror("Error", "No se pudo cargar el calendario desde el fichero Excel.")
-            return
-        self.update_status("Calendario cargado desde fichero Excel")
-        # self.log(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Calendario cargado desde fichero Excel")
-        self.log("Calendario cargado desde fichero Excel")
-        self.load_sample_data()  # Cargar los datos para la vista previa                
+        self.calendar_manager._complete_calendar_generation()
     
+    def export_cal(self):
+        self.calendar_manager.export_cal()
+    
+    def load_cal(self):
+        self.calendar_manager.load_cal()
+           
     def sync_to_sharepoint(self):
         """Sync data to SharePoint"""
         if not self.sp_authenticated:
@@ -750,7 +435,7 @@ class SharePointSyncApp(ctk.CTk):
     
     def _complete_sync(self):
         """Complete sync operation"""
-        self.last_sync_label.configure(text=f"Last sync: {datetime.now().strftime('%H:%M:%S')}")
+        self.header.last_sync_label.configure(text=f"Last sync: {datetime.now().strftime('%H:%M:%S')}")
         self.update_status("Sync completed successfully")
         self.progress_bar.set(0)
         messagebox.showinfo("Sync Complete", "Data has been successfully synced to SharePoint")
@@ -844,7 +529,7 @@ class SharePointSyncApp(ctk.CTk):
                 SP_CLIENT_ID, 
                 SP_TENANT_ID, 
                 USER_EMAIL, 
-                self.add_log  # Aquí pasamos la función en lugar de la lista
+                self.log
             )
         return self.app_state["graph"]
 
@@ -873,52 +558,6 @@ class SharePointSyncApp(ctk.CTk):
 
         return sid, lid
 
-
-
-    def add_log(self, message: str):
-        """Añadir mensaje al buffer y (si existe) al visor"""
-        # Asegurar que la lista exista
-        if not hasattr(self, "logs"):
-            self.logs = []
-
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        entry = f"{timestamp} - {message}"
-        self.log(entry)
-
-        # Si el visor ya está creado, lo actualizamos en el hilo de la UI
-        if hasattr(self, "log_box") and self.txt_log is not None:
-            # Garantiza seguridad si add_log se llama desde otro hilo
-            self.after(0, lambda e=entry: self._append_to_log_box(e))
-
-
-    # def _append_to_log_box(self, log: str):
-    #     """Insertar texto en el textbox de logs"""
-    #     if not hasattr(self, "log_box") or self.log_box is None:
-    #         return
-    #     self.log_box.configure(state="normal")
-    #     self.log_box.insert("end", log + "\n")
-    #     self.log_box.see("end")
-    #     self.log_box.configure(state="disabled")
-
-
-    # ------------------------------
-    # OPCIONAL: MOSTRAR LOGS EN VENTANA APARTE
-    # ------------------------------
-    def show_logs(self):
-        """Mostrar todos los logs en una ventana aparte"""
-        log_window = ctk.CTkToplevel(self)
-        log_window.title("Application Logs")
-        log_window.geometry("600x400")
-
-        log_text = ctk.CTkTextbox(log_window, wrap="word")
-        log_text.pack(fill="both", expand=True, padx=10, pady=10)
-
-        log_text.configure(state="normal")
-        for entry in self.logs:
-            log_text.insert("end", entry + "\n")
-        log_text.see("end")
-        log_text.configure(state="disabled")
-                    
     
     def update_status(self, message):
         """Update status bar message"""
