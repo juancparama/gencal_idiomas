@@ -57,7 +57,7 @@ class CalendarService:
                     numero_dia = (current - base_date).days + 2
                     titulo = f"{r['PERNR']}-{numero_dia}"
                     rows.append({
-                        "Título": titulo,
+                        "Title": titulo,
                         "PERNR": r["PERNR"],
                         "Nombre": r["Nombre"],
                         "Mail": r["Mail"],
@@ -66,9 +66,9 @@ class CalendarService:
                         "Idioma": r["Idioma"],
                         "Estado": "Pendiente",
                         "Aviso24h": "",
-                        "Comentarios": ""
+                        "Observaciones": ""
                     })
                 current += timedelta(days=1)
 
-        return pd.DataFrame(rows, columns=["Título","PERNR","Nombre","Mail","Fecha",
-                                         "Grupo","Idioma","Estado","Aviso24h","Comentarios"])
+        return pd.DataFrame(rows, columns=["Title","PERNR","Nombre","Mail","Fecha",
+                                         "Grupo","Idioma","Estado","Aviso24h","Observaciones"])
