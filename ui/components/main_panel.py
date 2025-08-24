@@ -12,7 +12,9 @@ class MainPanel(ctk.CTkFrame):
         self.grid_rowconfigure(1, weight=1)
         
         # Headers for data grid
-        self.headers = ["Título", "PERNR", "Nombre", "Mail", "Fecha", "Grupo", "Idioma"]
+        self.headers = ["Title", "PERNR", "Nombre", "Mail", "Fecha", "Grupo", "Idioma"]
+        # self.headers = list(self.app.calendar_df.columns) if self.app.calendar_df is not None else []
+
         
         # Create components
         self.setup_preview_header()
@@ -148,12 +150,20 @@ class MainPanel(ctk.CTkFrame):
         else:
             self.refresh_data_grid()
 
-    def refresh_data_grid(self):
-        """Refresh the data grid display"""
+    def refresh_data_grid(self, data=None):
+        """Refresh the data grid display
+
+        Args:
+            data (list[dict] | None): Registros a mostrar en la grid.
+                                      Si es None, se usa self.app.class_data.
+        """
         for widget in self.data_rows_frame.winfo_children():
             widget.destroy()
         
-        for i, row_data in enumerate(self.app.class_data):
+        # Si no se pasa data, usamos class_data
+        rows = data if data is not None else self.app.class_data
+
+        for i, row_data in enumerate(rows):
             self.create_data_row(row_data, i)
 
     def create_data_row(self, row_data, row_index):
@@ -165,7 +175,8 @@ class MainPanel(ctk.CTkFrame):
         )
         row_frame.pack(fill="x", pady=1)
         
-        filtered_data = row_data[:7]
+        # Solo mostrar columnas definidas en headers
+        filtered_data = [row_data.get(col, "") for col in self.headers]
         
         for i in range(len(self.headers)):
             row_frame.grid_columnconfigure(i, weight=1)

@@ -96,18 +96,20 @@ class SharePointSyncApp(ctk.CTk):
         self.main_panel.filter_data()
     
     def load_sample_data(self):        
-        """Load data from calendar_df"""        
-        if self.calendar_df is not None and not self.calendar_df.empty:            
-            # Usar solo los 10 primeros registros para la vista previa
-            preview_df = self.calendar_df.head(10)
-
-            self.class_data = preview_df.values.tolist()
-            self.main_panel.update_record_count(len(self.calendar_df))
+        """Load data from calendar_df and show a preview in the grid"""        
+        if self.calendar_df is not None and not self.calendar_df.empty:
+            # Convertimos todo el dataframe a lista de diccionarios para class_data
+            self.class_data = self.calendar_df.to_dict(orient="records")
+            
+            # Preview para la grid: solo los primeros 10 registros
+            preview_data = self.class_data[:10]
+            self.main_panel.update_record_count(len(self.class_data))
         else:
             self.class_data = []
+            preview_data = []
             self.main_panel.update_record_count(0)
 
-        self.main_panel.refresh_data_grid()
+        self.main_panel.refresh_data_grid(preview_data)
         
         
     def update_status(self, message: str):
