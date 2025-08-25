@@ -2,7 +2,11 @@
 from datetime import date, datetime
 import math
 import os
-
+import time
+from typing import Any, Dict, List, Optional
+from collections import Counter
+import pandas as pd
+import copy
 import requests
 import msal
 import webbrowser
@@ -79,31 +83,41 @@ class SharePointService:
         return True
     
 
-    def sync_data(self, data):
-        """Borra todos los elementos y luego inserta nuevos registros en SharePoint usando batch"""
-        self.log_fn(f"🔎 sync_data recibe tipo: {type(data)} con len={getattr(data, '__len__', 'NA')}")
-        if isinstance(data, list) and data:
-            self.log_fn(f"   Primer elemento: {type(data[0])} -> {data[0]}")
+    def sync_data(self, rows: List[Dict[str, Any]]) -> bool:
+        """
+        Sincroniza datos en SharePoint:
+        1. Borra todos los elementos existentes de la lista.
+        2. Inserta nuevos registros en lotes.
+
+        Args:
+            rows: Lista de dicts (cada fila corresponde a un item con nombres de columnas displayName).
+
+        Returns:
+            True si la inserción coincide en número con la cantidad de registros enviados.
+        """
+        self.log_fn(f"🔎 sync_data recibe tipo: {type(rows)} con len={len(rows) if rows is not None else 'NA'}")
+        if isinstance(rows, list) and rows:
+            self.log_fn(f"   Primer elemento: {type(rows[0])} -> {rows[0]}")
 
         if not all([self.client, self._site_id, self._list_id]):
             raise ValueError("SharePoint not properly initialized")
         
-        if data is None or len(data) == 0:
+        if not rows:
             self.log_fn("⚠️ No hay registros para insertar en SharePoint")
             return False
                 
         # --- Borrado de todos los elementos ---
         self.log_fn("🔄 Iniciando borrado de elementos de la lista...")
-        url = f"{GRAPH_BASE}/sites/{self._site_id}/lists/{self._list_id}/items?$select=id"
+        url: Optional[str] = f"{GRAPH_BASE}/sites/{self._site_id}/lists/{self._list_id}/items?$select=id"
         total_deleted = 0
 
         while url:
-            data_items, err, _, _ = self.client.graph_get(url)
+            list_items, err, _, _ = self.client.graph_get(url)
             if err:
                 self.log_fn(f"❌ Error obteniendo items: {err}")
                 return False
 
-            items = data_items.get("value", [])
+            items = list_items.get("value", [])
             if not items:
                 break
 
@@ -121,8 +135,7 @@ class SharePointService:
                     ]
                 }
 
-                # ⚠️ NO machacar el parámetro `data`
-                batch_resp, err, status, _ = self.client._make_request(
+                batch_response, err, status, _ = self.client._make_request(
                     "POST",
                     f"{GRAPH_BASE}/$batch",
                     json=requests_batch
@@ -135,7 +148,7 @@ class SharePointService:
                     self.log_fn(f"✔️ Eliminados {len(batch)} elementos en lote")
 
             # Paginación
-            url = data_items.get("@odata.nextLink")
+            url = list_items.get("@odata.nextLink")
 
         self.log_fn(f"✅ Borrado completado. Total eliminados: {total_deleted}")
 
@@ -145,15 +158,15 @@ class SharePointService:
             self.log_fn("❌ No hay mapa de columnas; no se puede continuar con la inserción.")
             return False
 
-        # Guardas defensivas antes de mapear
-        if not isinstance(data, list):
-            self.log_fn(f"❌ Esperaba lista de dicts; recibí {type(data)} -> {repr(data)[:200]}")
+        # Guardas defensivas
+        if not isinstance(rows, list):
+            self.log_fn(f"❌ Esperaba lista de dicts; recibí {type(rows)} -> {repr(rows)[:200]}")
             return False
-        if data and not isinstance(data[0], dict):
-            self.log_fn(f"❌ Cada fila debe ser dict; primer elemento es {type(data[0])} -> {repr(data[0])[:200]}")
+        if rows and not isinstance(rows[0], dict):
+            self.log_fn(f"❌ Cada fila debe ser dict; primer elemento es {type(rows[0])} -> {repr(rows[0])[:200]}")
             return False
 
-        mapped_rows = self._map_rows_to_internal(data, col_map)
+        mapped_rows = self._map_rows_to_internal(rows, col_map)
 
         # 🔍 Validación extra
         for i, row in enumerate(mapped_rows[:3]):
@@ -212,8 +225,7 @@ class SharePointService:
     def _sanitize_value(self, v):
         """Convierte NaN/NaT a None y formatea fechas a ISO."""
         try:
-            # Soporta pandas si está disponible
-            import pandas as pd
+            # Soporta pandas si está disponible            
             if pd.isna(v):
                 return None
         except Exception:
@@ -234,8 +246,7 @@ class SharePointService:
         col_map: dict {displayName -> internalName}
         Devuelve lista de dicts con internal names, asegurando 'Title'.
         Convierte a texto campos como PERNR y Grupo, y omite campos con valores por defecto.
-        """
-        from collections import Counter
+        """        
         missing = Counter()
         mapped_rows = []
 
@@ -287,12 +298,9 @@ class SharePointService:
         # Log de un ejemplo mapeado
         if mapped_rows:
             try:
-                import json
                 self.log_fn(f"🧭 Ejemplo de fila mapeada a internal names: {json.dumps(mapped_rows[0], ensure_ascii=False)}")
             except Exception:
-                pass
-        
-        import copy
+                pass    
         mapped_rows = [copy.deepcopy(r) for r in mapped_rows]
         
 
@@ -459,10 +467,95 @@ class GraphDelegatedClient:
         return data.get("value", [])
         
 
-def insert_dataframe_in_batches(graph_client, site_id, list_id, rows, log, batch_size=20, progress_cb=None):
-    """
-    Inserta registros en la lista SharePoint usando batch requests.
+# def insert_dataframe_in_batches(
+#     graph_client: Any,
+#     site_id: str,
+#     list_id: str,
+#     rows: List[Dict[str, Any]], 
+#     log: callable,
+#     batch_size: int = 20,
+#     progress_cb: Optional[callable] = None
+# ) -> None:
+#     """
+#     Inserta registros en la lista SharePoint usando batch requests.
     
+#     :param graph_client: GraphDelegatedClient
+#     :param site_id: ID del site SharePoint
+#     :param list_id: ID de la lista SharePoint
+#     :param rows: lista de dicts con los campos a insertar
+#     :param log: función para logs
+#     :param batch_size: máximo de items por batch (Graph limita a 20)
+#     :param progress_cb: callback opcional (inserted, total) para barra de progreso
+#     """
+#     total = len(rows)
+#     inserted = 0
+
+#     for i in range(0, total, batch_size):
+#         batch = rows[i:i + batch_size]
+
+#          # Log de ejemplo del primer payload
+#         if i == 0 and batch:
+#             try:
+#                 log(f"Ejemplo de payload a insertar: {json.dumps(batch[0], ensure_ascii=False)}")
+#             except Exception as e:
+#                 log(f"⚠️ No se pudo serializar el primer payload: {e}")
+
+#         # Construimos batch request
+#         requests_batch = {
+#             "requests": [
+#                 {
+#                     "id": str(idx),
+#                     "method": "POST",
+#                     "url": f"/sites/{site_id}/lists/{list_id}/items",
+#                     "headers": {"Content-Type": "application/json"},
+#                     "body": {"fields": item}
+#                 }
+#                 for idx, item in enumerate(batch)
+#             ]
+#         }
+
+#         # 🚨 Log de la request completa (solo la primera vez, para no saturar)
+#         if i == 0:
+#             try:
+#                 log(f"Ejemplo de batch request: {json.dumps(requests_batch, ensure_ascii=False)[:1000]}...")  # recortado a 1000 chars
+#             except Exception as e:
+#                 log(f"⚠️ No se pudo serializar la batch request: {e}")
+
+#         # Ejecutamos batch
+#         data, err, status, _ = graph_client._make_request(
+#             "POST",
+#             f"{GRAPH_BASE}/$batch",
+#             json=requests_batch
+#         )
+
+#         if err:
+#             log(f"❌ Error en batch insert: {err}")
+#             # Opcional: podrías implementar retry aquí
+#         else:
+#             log(f"✔️ Insertados {len(batch)} elementos en batch")
+#             inserted += len(batch)
+
+#         # Actualizar barra de progreso si se pasa callback
+#         if progress_cb:
+#             progress_cb(inserted, total)
+
+#     log(f"✅ Inserción completada. Total insertados: {inserted}/{total}")
+
+
+def insert_dataframe_in_batches(
+    graph_client,
+    site_id: str,
+    list_id: str,
+    rows: list,
+    log: callable,
+    batch_size: int = 20,
+    progress_cb: callable = None,
+    max_retries: int = 3,
+    retry_delay: float = 2.0
+) -> None:
+    """
+    Inserta registros en la lista SharePoint usando batch requests, optimizado para grandes volúmenes.
+
     :param graph_client: GraphDelegatedClient
     :param site_id: ID del site SharePoint
     :param list_id: ID de la lista SharePoint
@@ -470,21 +563,14 @@ def insert_dataframe_in_batches(graph_client, site_id, list_id, rows, log, batch
     :param log: función para logs
     :param batch_size: máximo de items por batch (Graph limita a 20)
     :param progress_cb: callback opcional (inserted, total) para barra de progreso
+    :param max_retries: número máximo de reintentos por batch fallido
+    :param retry_delay: segundos a esperar antes de reintentar
     """
     total = len(rows)
     inserted = 0
 
-    for i in range(0, total, batch_size):
-        batch = rows[i:i + batch_size]
-
-         # Log de ejemplo del primer payload
-        if i == 0 and batch:
-            try:
-                log(f"Ejemplo de payload a insertar: {json.dumps(batch[0], ensure_ascii=False)}")
-            except Exception as e:
-                log(f"⚠️ No se pudo serializar el primer payload: {e}")
-
-        # Construimos batch request
+    for start in range(0, total, batch_size):
+        batch = rows[start:start + batch_size]
         requests_batch = {
             "requests": [
                 {
@@ -498,28 +584,27 @@ def insert_dataframe_in_batches(graph_client, site_id, list_id, rows, log, batch
             ]
         }
 
-        # 🚨 Log de la request completa (solo la primera vez, para no saturar)
-        if i == 0:
-            try:
-                log(f"Ejemplo de batch request: {json.dumps(requests_batch, ensure_ascii=False)[:1000]}...")  # recortado a 1000 chars
-            except Exception as e:
-                log(f"⚠️ No se pudo serializar la batch request: {e}")
+        attempt = 0
+        while attempt <= max_retries:
+            data, err, status, _ = graph_client._make_request(
+                "POST",
+                f"https://graph.microsoft.com/v1.0/$batch",
+                json=requests_batch
+            )
 
-        # Ejecutamos batch
-        data, err, status, _ = graph_client._make_request(
-            "POST",
-            f"{GRAPH_BASE}/$batch",
-            json=requests_batch
-        )
+            if not err:
+                inserted += len(batch)
+                log(f"✔️ Insertados {len(batch)} elementos en batch ({inserted}/{total})")
+                break
+            else:
+                attempt += 1
+                if attempt <= max_retries:
+                    log(f"⚠️ Error en batch insert: {err}. Reintentando {attempt}/{max_retries} en {retry_delay}s...")
+                    time.sleep(retry_delay)
+                else:
+                    log(f"❌ Batch fallido después de {max_retries} reintentos: {err}")
+                    break
 
-        if err:
-            log(f"❌ Error en batch insert: {err}")
-            # Opcional: podrías implementar retry aquí
-        else:
-            log(f"✔️ Insertados {len(batch)} elementos en batch")
-            inserted += len(batch)
-
-        # Actualizar barra de progreso si se pasa callback
         if progress_cb:
             progress_cb(inserted, total)
 
