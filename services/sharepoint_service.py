@@ -77,9 +77,14 @@ class SharePointService:
             self.log_fn(f"La lista '{SP_LIST_NAME}' contiene actualmente {item_count} elementos.")
             
         return True
+    
 
     def sync_data(self, data):
         """Borra todos los elementos y luego inserta nuevos registros en SharePoint usando batch"""
+        self.log_fn(f"🔎 sync_data recibe tipo: {type(data)} con len={getattr(data, '__len__', 'NA')}")
+        if isinstance(data, list) and data:
+            self.log_fn(f"   Primer elemento: {type(data[0])} -> {data[0]}")
+
         if not all([self.client, self._site_id, self._list_id]):
             raise ValueError("SharePoint not properly initialized")
         
@@ -87,7 +92,7 @@ class SharePointService:
             self.log_fn("⚠️ No hay registros para insertar en SharePoint")
             return False
                 
-        # Borrar todos los elementos existentes en la lista
+        # --- Borrado de todos los elementos ---
         self.log_fn("🔄 Iniciando borrado de elementos de la lista...")
         url = f"{GRAPH_BASE}/sites/{self._site_id}/lists/{self._list_id}/items?$select=id"
         total_deleted = 0
@@ -116,7 +121,8 @@ class SharePointService:
                     ]
                 }
 
-                data, err, status, _ = self.client._make_request(
+                # ⚠️ NO machacar el parámetro `data`
+                batch_resp, err, status, _ = self.client._make_request(
                     "POST",
                     f"{GRAPH_BASE}/$batch",
                     json=requests_batch
@@ -139,11 +145,21 @@ class SharePointService:
             self.log_fn("❌ No hay mapa de columnas; no se puede continuar con la inserción.")
             return False
 
-        # 'data' debe ser lista de dicts con displayNames (lo que viene del DataFrame)
+        # Guardas defensivas antes de mapear
+        if not isinstance(data, list):
+            self.log_fn(f"❌ Esperaba lista de dicts; recibí {type(data)} -> {repr(data)[:200]}")
+            return False
+        if data and not isinstance(data[0], dict):
+            self.log_fn(f"❌ Cada fila debe ser dict; primer elemento es {type(data[0])} -> {repr(data[0])[:200]}")
+            return False
+
         mapped_rows = self._map_rows_to_internal(data, col_map)
-        
-        
-        # Insertar registros nuevos
+
+        # 🔍 Validación extra
+        for i, row in enumerate(mapped_rows[:3]):
+            self.log_fn(f"   [DEBUG] mapped_rows[{i}] = {type(row)} -> {row}")
+
+        # --- Inserción batch ---
         self.log_fn("🔄 Iniciando inserción de nuevos elementos en la lista...")
         insert_dataframe_in_batches(
             self.client,
@@ -154,14 +170,13 @@ class SharePointService:
             batch_size=20
         )
 
-        # Verificación: contar items
+        # --- Verificación: contar items ---
         new_count = self.client.get_list_item_count(self._site_id, self._list_id)
         if new_count != -1:
             self.log_fn(f"📈 La lista ahora contiene {new_count} elementos.")
             return new_count == len(mapped_rows)
 
         return True
-        
 
     def get_column_map(self, force=False):
         """
@@ -224,6 +239,8 @@ class SharePointService:
         missing = Counter()
         mapped_rows = []
 
+        self.log_fn(f"🔎 _map_rows_to_internal recibe {len(rows)} filas, primer tipo: {type(rows[0])}")
+
         # Campos de SharePoint que no debemos enviar porque tienen valores por defecto
         EXCLUDE_FIELDS = {"Estado", "Aviso24h", "Observaciones"}
 
@@ -274,6 +291,10 @@ class SharePointService:
                 self.log_fn(f"🧭 Ejemplo de fila mapeada a internal names: {json.dumps(mapped_rows[0], ensure_ascii=False)}")
             except Exception:
                 pass
+        
+        import copy
+        mapped_rows = [copy.deepcopy(r) for r in mapped_rows]
+        
 
         return mapped_rows
     
