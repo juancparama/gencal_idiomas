@@ -22,7 +22,7 @@ class ConfigPanel(ctk.CTkScrollableFrame):
     def create_panels(self):
         """Create all configuration panels"""
         # Conexiones section
-        self.conexiones_panel = ConexionesPanel(self, self.app)
+        # self.conexiones_panel = ConexionesPanel(self, self.app)
         
         # Fechas section
         self.fechas_panel = FechasPanel(self, self.app)

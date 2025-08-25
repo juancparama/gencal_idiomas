@@ -16,12 +16,27 @@ class LogPanel(ctk.CTkFrame):
         """Create log viewer panel"""
         self.pack(fill="both", padx=10, pady=(0, 10), expand=True)
 
+        # Frame for title and button
+        header_frame = ctk.CTkFrame(self)
+        # header_frame.pack(fill="x", pady=(10, 5))
+        header_frame.pack(fill="x", padx=5, pady=(10, 5))  # Added padx to frame
+
         # Title
         ctk.CTkLabel(
-            self,
+            header_frame,
             text="Visor de logs",
             font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(pady=(10, 5))
+        ).pack(side="left", padx=10)
+
+        # Log button
+        self.log_btn = ctk.CTkButton(
+            header_frame,
+            text="Show Logs",
+            width=80,
+            height=30,
+            command=self.app.show_logs
+        )
+        self.log_btn.pack(side="right", padx=20)
 
         # Log text box
         self.txt_log = ctk.CTkTextbox(
