@@ -1,3 +1,4 @@
+#File: ui/components/header.py
 import customtkinter as ctk
 from config import COLORS
 

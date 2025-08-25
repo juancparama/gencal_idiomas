@@ -142,6 +142,7 @@ class SharePointService:
         # 'data' debe ser lista de dicts con displayNames (lo que viene del DataFrame)
         mapped_rows = self._map_rows_to_internal(data, col_map)
         
+        
         # Insertar registros nuevos
         self.log_fn("🔄 Iniciando inserción de nuevos elementos en la lista...")
         insert_dataframe_in_batches(
@@ -217,31 +218,50 @@ class SharePointService:
         rows: lista de dicts con displayNames como claves (los del DataFrame)
         col_map: dict {displayName -> internalName}
         Devuelve lista de dicts con internal names, asegurando 'Title'.
+        Convierte a texto campos como PERNR y Grupo, y omite campos con valores por defecto.
         """
         from collections import Counter
         missing = Counter()
         mapped_rows = []
 
+        # Campos de SharePoint que no debemos enviar porque tienen valores por defecto
+        EXCLUDE_FIELDS = {"Estado", "Aviso24h", "Observaciones"}
+
+        # Campos que en SharePoint son texto aunque en el DataFrame vengan como números
+        TEXT_FIELDS = {"PERNR", "Grupo"}
+
         for idx, r in enumerate(rows):
             new = {}
             for k, v in r.items():
+                if k in EXCLUDE_FIELDS:
+                    continue
+
                 internal = col_map.get(k)
                 if internal:
+                    # Reemplazar LinkTitle por Title si existe
+                    if internal.lower() == "linktitle":
+                        internal = "Title"
+
+                    # Convertir a str si SharePoint espera texto
+                    if internal in TEXT_FIELDS and v is not None:
+                        v = str(v)
+
                     new[internal] = self._sanitize_value(v)
                 else:
                     missing[k] += 1
 
-            # Asegurar 'Title'
+            # Asegurar 'Title' siempre presente
             if "Title" not in new:
-                # intenta tomarlo de posibles columnas típicas
                 for candidate in ("Título", "Titulo", "Title", "Nombre"):
                     if candidate in r and r[candidate]:
                         new["Title"] = str(r[candidate])
                         break
-                if "Title" not in new:
+                else:
                     new["Title"] = f"Item {idx+1}"
 
-            mapped_rows.append(new)
+            # Solo campos writeable (están en col_map.values()) + Title obligatorio
+            writeable = {k: v for k, v in new.items() if k in col_map.values() or k == "Title"}
+            mapped_rows.append(writeable)
 
         if missing:
             missing_txt = ", ".join(f"{k}({c})" for k, c in missing.items())

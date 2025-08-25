@@ -21,6 +21,10 @@ class MainPanel(ctk.CTkFrame):
         self.setup_data_grid()
         self.setup_action_buttons()
 
+        # Dentro de setup_action_buttons(), al final
+
+
+
     def setup_preview_header(self):
         """Create the preview section header with filters"""
         preview_header = ctk.CTkFrame(self, height=60, fg_color="transparent")
@@ -44,7 +48,7 @@ class MainPanel(ctk.CTkFrame):
         ctk.CTkLabel(filter_frame, text="To:", font=ctk.CTkFont(size=12)).pack(side="left", padx=(10,2))
         self.date_to = ctk.CTkEntry(filter_frame, placeholder_text="YYYY-MM-DD", width=100)
         self.date_to.pack(side="left", padx=2)
-        
+
         filter_btn = ctk.CTkButton(filter_frame, text="Filter", width=60, height=28,
                                   command=self.filter_data)
         filter_btn.pack(side="left", padx=5)
@@ -123,7 +127,20 @@ class MainPanel(ctk.CTkFrame):
             command=self.app.load_cal
         )
         self.preview_btn.pack(side="left", padx=5)
-        
+
+        self.test_insert_btn = ctk.CTkButton(
+            left_frame,
+            text="Test Insert SP",
+            width=150, height=40,
+            fg_color=COLORS['info'],  # o cualquier color que quieras
+            hover_color="#2980B9",
+            font=ctk.CTkFont(size=14),
+            command=lambda: self.app.sp_manager.authenticate(
+                on_success=self.app.sp_manager.test_single_insert
+            )
+        )
+        self.test_insert_btn.pack(side="left", padx=5)
+
         # Right side button
         right_frame = ctk.CTkFrame(action_frame, fg_color="transparent")
         right_frame.pack(side="right", pady=10)

@@ -5,11 +5,12 @@ from datetime import datetime
 from tkinter import messagebox
 from config import COLORS
 from ui.components.dialogs import ConfirmDialog
-from services.sharepoint_service import SharePointService
+from services.sharepoint_service import SharePointService, insert_dataframe_in_batches
 
 class SharePointManager:
     def __init__(self, app):
-        self.app = app
+        self.app = app        
+        self.log_fn = app.log        
         self.sp_service = SharePointService(log_callback=app.log)
         
     def authenticate(self, on_success=None):
@@ -110,4 +111,42 @@ class SharePointManager:
         """Handle failed sync"""
         self.app.update_status("Error en sincronización")
         self.app.status_bar.set_progress(0)
-        messagebox.showerror("Error", "Error sincronizando datos con SharePoint")
+    
+    def test_single_insert(self):
+        """Inserta un registro de prueba válido en SharePoint"""
+        if not self.sp_service.authenticate():
+            self.log_fn("❌ No se pudo autenticar")
+            return
+
+        col_map = self.sp_service.get_column_map()
+        if not col_map:
+            self.log_fn("❌ No se pudo obtener el mapa de columnas")
+            return
+
+        test_row = {
+            "Title": "Prueba",
+            "PERNR": "000123",
+            "Nombre": "Juan Pérez",
+            "Mail": "juan.perez@example.com",
+            "Fecha": "2025-08-25",
+            "Grupo": "A",
+            "Idioma": "Español"
+        }
+
+        # Mapear a internal names usando tu método tal como está
+        mapped = self.sp_service._map_rows_to_internal([test_row], col_map)
+
+        # 🔹 Corregir el Title: asegurarse que se use la columna interna 'Title'
+        for row in mapped:
+            if "LinkTitle" in row:
+                row["Title"] = row.pop("LinkTitle")
+
+        # Insertar usando batch (solo 1 registro)
+        insert_dataframe_in_batches(
+            self.sp_service.client,
+            self.sp_service._site_id,
+            self.sp_service._list_id,
+            mapped,
+            log=self.log_fn,
+            batch_size=1
+        )
