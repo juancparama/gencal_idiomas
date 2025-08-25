@@ -1,6 +1,7 @@
 import customtkinter as ctk
 from config import COLORS
 
+
 class MainPanel(ctk.CTkFrame):
     def __init__(self, parent, app):
         super().__init__(parent, corner_radius=10)
@@ -127,24 +128,23 @@ class MainPanel(ctk.CTkFrame):
             command=self.app.load_cal
         )
         self.preview_btn.pack(side="left", padx=5)
-
-        self.test_insert_btn = ctk.CTkButton(
-            left_frame,
-            text="Test Insert SP",
-            width=150, height=40,
-            fg_color=COLORS['info'],  # o cualquier color que quieras
-            hover_color="#2980B9",
-            font=ctk.CTkFont(size=14),
-            command=lambda: self.app.sp_manager.authenticate(
-                on_success=self.app.sp_manager.test_single_insert
-            )
-        )
-        self.test_insert_btn.pack(side="left", padx=5)
+       
 
         # Right side button
         right_frame = ctk.CTkFrame(action_frame, fg_color="transparent")
         right_frame.pack(side="right", pady=10)
         
+        self.delete_btn = ctk.CTkButton(
+            right_frame,
+            text="🗑️ Borrar todo SharePoint",
+            width=150, height=40,
+            fg_color=COLORS['error'],
+            hover_color="#C0392B",
+            font=ctk.CTkFont(size=14),
+            command=self.app.delete_all_items
+        )
+        self.delete_btn.pack(side="left", padx=5)
+
         self.sync_btn = ctk.CTkButton(
             right_frame,
             text="Subir a SharePoint",
@@ -154,7 +154,7 @@ class MainPanel(ctk.CTkFrame):
             font=ctk.CTkFont(size=14, weight="bold"),
             command=self.app.sync_to_sharepoint
         )
-        self.sync_btn.pack(padx=5)
+        self.sync_btn.pack(side="left", padx=5)
 
     def filter_data(self):
         """Filter data based on date range"""

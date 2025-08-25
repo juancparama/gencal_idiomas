@@ -3,6 +3,7 @@ from datetime import date, datetime
 import math
 import os
 import time
+import uuid
 from typing import Any, Dict, List, Optional
 from collections import Counter
 import pandas as pd
@@ -11,6 +12,8 @@ import requests
 import msal
 import webbrowser
 import json
+import asyncio
+import aiohttp  
 
 from config import (
     SP_CLIENT_ID, 
@@ -83,113 +86,251 @@ class SharePointService:
         return True
     
 
-    def sync_data(self, rows: List[Dict[str, Any]]) -> bool:
-        """
-        Sincroniza datos en SharePoint:
-        1. Borra todos los elementos existentes de la lista.
-        2. Inserta nuevos registros en lotes.
+    
+    async def delete_all_items_async(self, max_concurrent=1, max_retries=10, base_delay=5.0):
+        headers = {
+            "Authorization": f"Bearer {self.client.token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+        }
 
-        Args:
-            rows: Lista de dicts (cada fila corresponde a un item con nombres de columnas displayName).
+        async with aiohttp.ClientSession() as session:
+            # Obtener todos los IDs
+            url = f"{GRAPH_BASE}/sites/{self._site_id}/lists/{self._list_id}/items?$select=id"
+            item_ids = []
+            while url:
+                async with session.get(url, headers=headers) as response:
+                    if response.status == 429:
+                        retry_after = int(response.headers.get("Retry-After", base_delay))
+                        self.log_fn(f"⏳ Throttling detectado. Esperando {retry_after}s...")
+                        await asyncio.sleep(retry_after)
+                        continue
+                    elif response.status != 200:
+                        self.log_fn(f"❌ Error obteniendo items: {response.status}")
+                        return False
+                    data = await response.json()
+                    items = data.get("value", [])
+                    item_ids.extend([item["id"] for item in items])
+                    url = data.get("@odata.nextLink")
 
-        Returns:
-            True si la inserción coincide en número con la cantidad de registros enviados.
-        """
-        self.log_fn(f"🔎 sync_data recibe tipo: {type(rows)} con len={len(rows) if rows is not None else 'NA'}")
-        if isinstance(rows, list) and rows:
-            self.log_fn(f"   Primer elemento: {type(rows[0])} -> {rows[0]}")
+            self.log_fn(f"🔎 Total elementos a eliminar: {len(item_ids)}")
+            batches = [item_ids[i:i+20] for i in range(0, len(item_ids), 20)]
+            sem = asyncio.Semaphore(max_concurrent)
 
-        if not all([self.client, self._site_id, self._list_id]):
-            raise ValueError("SharePoint not properly initialized")
-        
-        if not rows:
-            self.log_fn("⚠️ No hay registros para insertar en SharePoint")
+            async def delete_batch(batch, batch_index):
+                async with sem:
+                    requests_batch = {
+                        "requests": [
+                            {
+                                "id": str(uuid.uuid4()),
+                                "method": "DELETE",
+                                "url": f"/sites/{self._site_id}/lists/{self._list_id}/items/{item_id}"
+                            }
+                            for item_id in batch
+                        ]
+                    }
+
+                    delay = base_delay
+                    for attempt in range(1, max_retries + 1):
+                        async with session.post(f"{GRAPH_BASE}/$batch", json=requests_batch, headers=headers) as response:
+                            if response.status == 429:
+                                retry_after = int(response.headers.get("Retry-After", delay))
+                                self.log_fn(f"⏳ Batch {batch_index}: Throttling. Esperando {retry_after}s...")
+                                await asyncio.sleep(retry_after)
+                                continue
+                            elif response.status == 200:
+                                self.log_fn(f"✔️ Batch {batch_index}: Eliminados {len(batch)} elementos")
+                                await asyncio.sleep(base_delay)  # pausa entre lotes
+                                return True
+                            else:
+                                error_text = await response.text()
+                                self.log_fn(f"⚠️ Batch {batch_index}: Error {response.status} - {error_text}. "
+                                            f"Reintento {attempt}/{max_retries} en {delay}s")
+                                await asyncio.sleep(delay)
+                                delay *= 2  # backoff exponencial
+
+                    self.log_fn(f"❌ Batch {batch_index} falló tras {max_retries} intentos")
+                    return False
+
+            results = []
+            for idx, batch in enumerate(batches):
+                result = await delete_batch(batch, idx)
+                results.append(result)
+
+            ok = all(results)
+            self.log_fn("✅ Borrado completado." if ok else "⚠️ Borrado completado con errores.")
+            return ok
+
+    def is_list_empty(self) -> bool:
+        """Verifica si la lista de SharePoint está vacía."""
+        count = self.client.get_list_item_count(self._site_id, self._list_id)
+        if count == -1:
+            self.log_fn("⚠️ No se pudo verificar si la lista está vacía.")
             return False
-                
-        # --- Borrado de todos los elementos ---
-        self.log_fn("🔄 Iniciando borrado de elementos de la lista...")
-        url: Optional[str] = f"{GRAPH_BASE}/sites/{self._site_id}/lists/{self._list_id}/items?$select=id"
-        total_deleted = 0
-
-        while url:
-            list_items, err, _, _ = self.client.graph_get(url)
-            if err:
-                self.log_fn(f"❌ Error obteniendo items: {err}")
-                return False
-
-            items = list_items.get("value", [])
-            if not items:
-                break
-
-            # Dividimos en lotes de 20 (máximo permitido en Graph /batch)
-            for i in range(0, len(items), 20):
-                batch = items[i:i+20]
-                requests_batch = {
-                    "requests": [
-                        {
-                            "id": str(idx),
-                            "method": "DELETE",
-                            "url": f"/sites/{self._site_id}/lists/{self._list_id}/items/{item['id']}"
-                        }
-                        for idx, item in enumerate(batch)
-                    ]
-                }
-
+        self.log_fn(f"📦 Verificación: la lista contiene {count} elementos.")
+        return count == 0    
+    
+    def sync_data(self, rows: List[Dict[str, Any]], mode: str = "replace") -> bool:
+        """
+        Sincroniza datos en SharePoint en dos modos:
+        - 'replace': elimina TODOS los elementos y vuelve a insertar todo.
+        - 'update' : NO elimina; inserta SOLO los nuevos (Title único).
+        """
+        def safe_batch_delete(requests_batch, max_retries=3, delay=2):
+            for attempt in range(max_retries):
                 batch_response, err, status, _ = self.client._make_request(
                     "POST",
                     f"{GRAPH_BASE}/$batch",
                     json=requests_batch
                 )
-                if err:
-                    self.log_fn(f"❌ Error en batch delete: {err}")
-                    return False
+                if not err:
+                    return batch_response, None
                 else:
-                    total_deleted += len(batch)
-                    self.log_fn(f"✔️ Eliminados {len(batch)} elementos en lote")
+                    self.log_fn(f"⚠️ Error en intento {attempt + 1} de batch delete: {err}")
+                    time.sleep(delay * (attempt + 1))  # espera progresiva
+            return None, err
 
-            # Paginación
-            url = list_items.get("@odata.nextLink")
 
-        self.log_fn(f"✅ Borrado completado. Total eliminados: {total_deleted}")
+        # ---- Logs iniciales y guardas defensivas (tuyas) ----
+        self.log_fn(f"🔎 sync_data recibe tipo: {type(rows)} con len={len(rows) if rows is not None else 'NA'}; mode={mode}")
+
+        if isinstance(rows, list) and rows:
+            self.log_fn(f"   Primer elemento: {type(rows[0])} -> {rows[0]}")
+
+        if not all([self.client, self._site_id, self._list_id]):
+            raise ValueError("SharePoint not properly initialized")
+
+        if not rows:
+            self.log_fn("⚠️ No hay registros para insertar en SharePoint")
+            return False
 
         # --- Mapeo a internal names ---
         col_map = self.get_column_map()
         if not col_map:
-            self.log_fn("❌ No hay mapa de columnas; no se puede continuar con la inserción.")
+            self.log_fn("❌ No hay mapa de columnas; no se puede continuar.")
             return False
 
-        # Guardas defensivas
+        # Guardas defensivas (tuyas)
         if not isinstance(rows, list):
             self.log_fn(f"❌ Esperaba lista de dicts; recibí {type(rows)} -> {repr(rows)[:200]}")
             return False
         if rows and not isinstance(rows[0], dict):
-            self.log_fn(f"❌ Cada fila debe ser dict; primer elemento es {type(rows[0])} -> {repr(rows[0])[:200]}")
+            self.log_fn(f"❌ Cada fila debe ser dict; primer elemento {type(rows[0])} -> {repr(rows[0])[:200]}")
             return False
 
         mapped_rows = self._map_rows_to_internal(rows, col_map)
 
-        # 🔍 Validación extra
+        # 🔍 Validación extra (tuyas): muestra las primeras 3 filas mapeadas
         for i, row in enumerate(mapped_rows[:3]):
             self.log_fn(f"   [DEBUG] mapped_rows[{i}] = {type(row)} -> {row}")
 
-        # --- Inserción batch ---
-        self.log_fn("🔄 Iniciando inserción de nuevos elementos en la lista...")
-        insert_dataframe_in_batches(
-            self.client,
-            self._site_id,
-            self._list_id,
-            mapped_rows,
-            log=self.log_fn,
-            batch_size=20
-        )
+        # ------------------------------
+        # MODO REPLACE: BORRA + INSERTA
+        # ------------------------------
 
-        # --- Verificación: contar items ---
-        new_count = self.client.get_list_item_count(self._site_id, self._list_id)
-        if new_count != -1:
-            self.log_fn(f"📈 La lista ahora contiene {new_count} elementos.")
-            return new_count == len(mapped_rows)
+        if mode == "replace":
+            self.log_fn("🔄 Iniciando borrado de elementos de la lista (modo paralelo)...")
+            asyncio.run(self.delete_all_items_async())
 
-        return True
+            # --- Inserción batch (todo) ---
+            self.log_fn("🔄 Iniciando inserción de nuevos elementos en la lista (REPLACE)...")
+            insert_dataframe_in_batches_async(
+                self.client,
+                self._site_id,
+                self._list_id,
+                mapped_rows,
+                log=self.log_fn,
+                batch_size=20
+            )
+
+            # --- Verificación: contar items (tu verificación) ---
+            new_count = self.client.get_list_item_count(self._site_id, self._list_id)
+            if new_count != -1:
+                self.log_fn(f"📈 La lista ahora contiene {new_count} elementos.")
+                return new_count == len(mapped_rows)
+
+            return True
+
+        # ---------------------------
+        # MODO UPDATE: SÓLO INSERTAR
+        # ---------------------------
+        elif mode == "update":
+            # Conteo antes de insertar (para verificar al final)
+            before_count = self.client.get_list_item_count(self._site_id, self._list_id)
+            self.log_fn(f"📦 Modo UPDATE: conteo actual = {before_count}")
+
+            # Cargar títulos existentes
+            existing_titles = self.get_existing_titles()
+            self.log_fn(f"🔎 Títulos existentes: {len(existing_titles)}")
+
+            # Filtrar SOLO nuevos por Title (y evita duplicados en el propio lote)
+            seen = set()
+            new_rows = []
+            for r in mapped_rows:
+                t = (r.get("Title") or "").strip()
+                if not t:
+                    self.log_fn("⚠️ Fila sin Title -> se ignora en modo UPDATE")
+                    continue
+                if t in existing_titles:
+                    continue
+                if t in seen:
+                    continue
+                seen.add(t)
+                new_rows.append(r)
+
+            self.log_fn(f"🧮 Resumen UPDATE: entrada={len(mapped_rows)} | existentes={len(existing_titles)} | nuevos={len(new_rows)} | ignorados={len(mapped_rows)-len(new_rows)}")
+
+            if not new_rows:
+                self.log_fn("ℹ️ No hay registros nuevos para insertar (Title ya existentes).")
+                return True
+
+            # Inserción batch SOLO de los nuevos
+            self.log_fn("🔄 Iniciando inserción de NUEVOS elementos (UPDATE)...")
+            insert_dataframe_in_batches_async(
+                self.client,
+                self._site_id,
+                self._list_id,
+                new_rows,
+                log=self.log_fn,
+                batch_size=20
+            )
+
+            # Verificación por conteo: después de insertar
+            after_count = self.client.get_list_item_count(self._site_id, self._list_id)
+            self.log_fn(f"📈 Conteo tras UPDATE: {after_count} (antes {before_count})")
+            if before_count != -1 and after_count != -1:
+                expected = before_count + len(new_rows)
+                return after_count == expected
+
+            return True
+
+        else:
+            self.log_fn(f"❌ mode desconocido: {mode}")
+            return False
+
+    def get_existing_titles(self) -> set:
+        """
+        Devuelve un set de Title (str) existentes en la lista.
+        Usa $expand=fields($select=Title) para no traer toda la ficha.
+        """
+        titles = set()
+        url = f"{GRAPH_BASE}/sites/{self._site_id}/lists/{self._list_id}/items"
+        params = {"$select": "id", "$top": 5000, "$expand": "fields($select=Title)"}
+
+        while url:
+            data, err, _, _ = self.client.graph_get(url, params=params)
+            if err:
+                self.log_fn(f"❌ Error obteniendo títulos existentes: {err}")
+                break
+            for it in data.get("value", []):
+                t = (it.get("fields") or {}).get("Title")
+                if isinstance(t, str) and t.strip():
+                    titles.add(t.strip())
+            url = data.get("@odata.nextLink")
+            params = None
+
+        return titles
+
 
     def get_column_map(self, force=False):
         """
@@ -403,9 +544,11 @@ class GraphDelegatedClient:
         """Realiza una petición GET a la API Graph."""
         return self._make_request("GET", url, **kwargs)
 
+    
     def graph_post(self, url, **kwargs):
         """Realiza una petición POST a la API Graph."""
-        return self._make_request("POST", url, json=json, **kwargs)
+        return self._make_request("POST", url, **kwargs)
+
 
     def get_site_id_by_path(self, site_graph_id: str):
         """Obtiene el ID de un sitio de SharePoint a partir de su ruta (hostname:/sites/path)."""
@@ -435,28 +578,44 @@ class GraphDelegatedClient:
             self.log(f"List ID encontrado: {list_id}")
         return list_id
 
-    def get_list_item_count(self, site_id: str, list_id: str):
-        """Obtiene el número de elementos en una lista de SharePoint."""
+
+    
+    def get_list_item_count(self, site_id: str, list_id: str, base_delay: float = 5.0, max_retries: int = 5):
+        """Obtiene el número de elementos en una lista de SharePoint con manejo de throttling."""
         url = f"{GRAPH_BASE}/sites/{site_id}/lists/{list_id}/items"
-        params = {"$select": "id", "$top": 5000}  # Aumentamos a 5000 items por página
+        params = {"$select": "id", "$top": 5000}
         total_items = 0
-        
+
         self.log(f"Obteniendo número de elementos de la lista {list_id}...")
-        
+
+        retries = 0
         while url:
-            data, err, _, _ = self.graph_get(url, params=params)
+            data, err, status, headers = self.graph_get(url, params=params)
+
+            if status == 429:
+                retry_after = headers.get("Retry-After")
+                delay = int(retry_after) if retry_after else base_delay * (retries + 1)
+                self.log(f"⏳ Throttling detectado. Esperando {delay}s antes de reintentar...")
+                time.sleep(delay)
+                retries += 1
+                if retries > max_retries:
+                    self.log("❌ Se excedieron los reintentos por throttling.")
+                    return -1
+                continue
+
             if err:
                 self.log(f"Error al intentar obtener el conteo de items. Respuesta: {err}")
                 return -1
-            
+
             items = data.get("value", [])
             total_items += len(items)
             url = data.get("@odata.nextLink")
             params = None
-        
+            time.sleep(base_delay)  # pausa entre páginas
+
         self.log(f"La lista contiene {total_items} elementos.")
         return total_items
-    
+
     def get_list_columns(self, site_id: str, list_id: str, select="name,displayName,hidden,readOnly"):
         """Devuelve la definición de columnas de la lista (internal name, displayName, etc.)."""
         url = f"{GRAPH_BASE}/sites/{site_id}/lists/{list_id}/columns"
@@ -465,147 +624,88 @@ class GraphDelegatedClient:
         if err:
             return None
         return data.get("value", [])
-        
 
-# def insert_dataframe_in_batches(
-#     graph_client: Any,
-#     site_id: str,
-#     list_id: str,
-#     rows: List[Dict[str, Any]], 
-#     log: callable,
-#     batch_size: int = 20,
-#     progress_cb: Optional[callable] = None
-# ) -> None:
-#     """
-#     Inserta registros en la lista SharePoint usando batch requests.
-    
-#     :param graph_client: GraphDelegatedClient
-#     :param site_id: ID del site SharePoint
-#     :param list_id: ID de la lista SharePoint
-#     :param rows: lista de dicts con los campos a insertar
-#     :param log: función para logs
-#     :param batch_size: máximo de items por batch (Graph limita a 20)
-#     :param progress_cb: callback opcional (inserted, total) para barra de progreso
-#     """
-#     total = len(rows)
-#     inserted = 0
+            
 
-#     for i in range(0, total, batch_size):
-#         batch = rows[i:i + batch_size]
-
-#          # Log de ejemplo del primer payload
-#         if i == 0 and batch:
-#             try:
-#                 log(f"Ejemplo de payload a insertar: {json.dumps(batch[0], ensure_ascii=False)}")
-#             except Exception as e:
-#                 log(f"⚠️ No se pudo serializar el primer payload: {e}")
-
-#         # Construimos batch request
-#         requests_batch = {
-#             "requests": [
-#                 {
-#                     "id": str(idx),
-#                     "method": "POST",
-#                     "url": f"/sites/{site_id}/lists/{list_id}/items",
-#                     "headers": {"Content-Type": "application/json"},
-#                     "body": {"fields": item}
-#                 }
-#                 for idx, item in enumerate(batch)
-#             ]
-#         }
-
-#         # 🚨 Log de la request completa (solo la primera vez, para no saturar)
-#         if i == 0:
-#             try:
-#                 log(f"Ejemplo de batch request: {json.dumps(requests_batch, ensure_ascii=False)[:1000]}...")  # recortado a 1000 chars
-#             except Exception as e:
-#                 log(f"⚠️ No se pudo serializar la batch request: {e}")
-
-#         # Ejecutamos batch
-#         data, err, status, _ = graph_client._make_request(
-#             "POST",
-#             f"{GRAPH_BASE}/$batch",
-#             json=requests_batch
-#         )
-
-#         if err:
-#             log(f"❌ Error en batch insert: {err}")
-#             # Opcional: podrías implementar retry aquí
-#         else:
-#             log(f"✔️ Insertados {len(batch)} elementos en batch")
-#             inserted += len(batch)
-
-#         # Actualizar barra de progreso si se pasa callback
-#         if progress_cb:
-#             progress_cb(inserted, total)
-
-#     log(f"✅ Inserción completada. Total insertados: {inserted}/{total}")
-
-
-def insert_dataframe_in_batches(
-    graph_client,
+async def insert_dataframe_in_batches_async(
+    token: str,
     site_id: str,
     list_id: str,
     rows: list,
     log: callable,
     batch_size: int = 20,
     progress_cb: callable = None,
-    max_retries: int = 3,
-    retry_delay: float = 2.0
-) -> None:
+    max_concurrent: int = 2,
+    max_retries: int = 5,
+    base_delay: float = 2.0
+) -> bool:
     """
-    Inserta registros en la lista SharePoint usando batch requests, optimizado para grandes volúmenes.
+    Inserta registros en SharePoint en batches, con manejo de throttling (async).
+    """
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    }
 
-    :param graph_client: GraphDelegatedClient
-    :param site_id: ID del site SharePoint
-    :param list_id: ID de la lista SharePoint
-    :param rows: lista de dicts con los campos a insertar
-    :param log: función para logs
-    :param batch_size: máximo de items por batch (Graph limita a 20)
-    :param progress_cb: callback opcional (inserted, total) para barra de progreso
-    :param max_retries: número máximo de reintentos por batch fallido
-    :param retry_delay: segundos a esperar antes de reintentar
-    """
     total = len(rows)
     inserted = 0
+    batches = [rows[i:i+batch_size] for i in range(0, total, batch_size)]
+    sem = asyncio.Semaphore(max_concurrent)
 
-    for start in range(0, total, batch_size):
-        batch = rows[start:start + batch_size]
-        requests_batch = {
-            "requests": [
-                {
-                    "id": str(idx),
-                    "method": "POST",
-                    "url": f"/sites/{site_id}/lists/{list_id}/items",
-                    "headers": {"Content-Type": "application/json"},
-                    "body": {"fields": item}
+    async with aiohttp.ClientSession() as session:
+
+        async def insert_batch(batch, batch_index):
+            nonlocal inserted
+            async with sem:
+                requests_batch = {
+                    "requests": [
+                        {
+                            "id": str(uuid.uuid4()),  # IDs únicos
+                            "method": "POST",
+                            "url": f"/sites/{site_id}/lists/{list_id}/items",
+                            "headers": {"Content-Type": "application/json"},
+                            "body": {"fields": item}
+                        }
+                        for item in batch
+                    ]
                 }
-                for idx, item in enumerate(batch)
-            ]
-        }
 
-        attempt = 0
-        while attempt <= max_retries:
-            data, err, status, _ = graph_client._make_request(
-                "POST",
-                f"https://graph.microsoft.com/v1.0/$batch",
-                json=requests_batch
-            )
+                delay = base_delay
+                for attempt in range(1, max_retries + 1):
+                    async with session.post(f"{GRAPH_BASE}/$batch", json=requests_batch, headers=headers) as response:
+                        data = await response.json()
+                        if response.status == 200:
+                            # Validar respuestas internas
+                            failures = [r for r in data.get("responses", []) if r.get("status", 500) >= 400]
+                            if not failures:
+                                inserted += len(batch)
+                                log(f"✔️ Batch {batch_index}: Insertados {len(batch)} elementos ({inserted}/{total})")
+                                if progress_cb:
+                                    progress_cb(inserted, total)
+                                return True
+                            else:
+                                log(f"⚠️ Batch {batch_index}: {len(failures)} fallos internos en batch.")
+                                # tratar como error -> aplicar retry
+                        else:
+                            error_text = await response.text()
+                            log(f"⚠️ Batch {batch_index}: Error {response.status} - {error_text}")
 
-            if not err:
-                inserted += len(batch)
-                log(f"✔️ Insertados {len(batch)} elementos en batch ({inserted}/{total})")
-                break
-            else:
-                attempt += 1
-                if attempt <= max_retries:
-                    log(f"⚠️ Error en batch insert: {err}. Reintentando {attempt}/{max_retries} en {retry_delay}s...")
-                    time.sleep(retry_delay)
-                else:
-                    log(f"❌ Batch fallido después de {max_retries} reintentos: {err}")
-                    break
+                        # Manejo de throttling
+                        retry_after = response.headers.get("Retry-After")
+                        if retry_after:
+                            delay = int(retry_after)
+                        else:
+                            delay = delay * 2  # backoff exponencial
 
-        if progress_cb:
-            progress_cb(inserted, total)
+                        log(f"Reintento {attempt}/{max_retries} en {delay}s...")
+                        await asyncio.sleep(delay)
 
-    log(f"✅ Inserción completada. Total insertados: {inserted}/{total}")
+                log(f"❌ Batch {batch_index} falló tras {max_retries} intentos")
+                return False
+
+        results = await asyncio.gather(*(insert_batch(batch, idx) for idx, batch in enumerate(batches)))
+        ok = all(results)
+
+    log("✅ Inserción completada." if ok else f"⚠️ Inserción incompleta: {inserted}/{total} registros insertados")
+    return ok

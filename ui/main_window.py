@@ -94,6 +94,9 @@ class SharePointSyncApp(ctk.CTk):
     def filter_data(self):
         """Filter data based on date range"""
         self.main_panel.filter_data()
+
+    def delete_all_items(self):
+        self.sp_manager.delete_all_items()
     
     def load_sample_data(self):        
         """Load data from calendar_df and show a preview in the grid"""        

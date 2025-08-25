@@ -85,7 +85,8 @@ class CalendarManager:
         if df is None or df.empty:
             messagebox.showerror("Error", "No se pudo cargar el calendario desde el fichero Excel.")
             return
+        
         self.app.calendar_df = df
         self.app.update_status("Calendario cargado desde fichero Excel")
-        self.app.log("Calendario cargado desde fichero Excel")
+        self.app.log(f"Calendario cargado desde fichero Excel con {len(df)} registros")
         self.app.load_sample_data()

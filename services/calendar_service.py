@@ -55,7 +55,7 @@ class CalendarService:
                 if current.isoweekday() == dia and current.strftime("%Y-%m-%d") not in festivos_set:
                     base_date = pd.Timestamp('1900-01-01')
                     numero_dia = (current - base_date).days + 2
-                    titulo = f"{r['PERNR']}-{numero_dia}"
+                    titulo = f"{r['PERNR']}-{numero_dia}-{r['Idioma'][:3].upper()}"
                     rows.append({
                         "Title": titulo,
                         "PERNR": r["PERNR"],
@@ -69,6 +69,14 @@ class CalendarService:
                         "Observaciones": ""
                     })
                 current += timedelta(days=1)
+        
 
-        return pd.DataFrame(rows, columns=["Title","PERNR","Nombre","Mail","Fecha",
-                                         "Grupo","Idioma","Estado","Aviso24h","Observaciones"])
+
+        # ... al final de generate_calendar_from_df, justo antes del return ...
+        df_out = pd.DataFrame(
+            rows,
+            columns=["Title", "PERNR", "Nombre", "Mail", "Fecha",
+                    "Grupo", "Idioma", "Estado", "Aviso24h", "Observaciones"]
+        )
+
+        return df_out
