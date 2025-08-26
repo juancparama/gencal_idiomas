@@ -87,18 +87,28 @@ class SharePointService:
     
 
     
-    async def delete_all_items_async(self, max_concurrent=1, max_retries=10, base_delay=5.0):
+    async def delete_all_items_async(
+        self,
+        max_concurrent: int = 1,
+        max_retries: int = 10,
+        base_delay: float = 5.0,
+        progress_cb: callable = None
+    ):
+        """
+        Borra todos los elementos de la lista en batches, con manejo de throttling (async)
+        y reporte de progreso opcional.
+        """
         headers = {
             "Authorization": f"Bearer {self.client.token}",
             "Accept": "application/json",
             "Content-Type": "application/json"
         }
 
-        async with aiohttp.ClientSession() as session:
-            # Obtener todos los IDs
-            url = f"{GRAPH_BASE}/sites/{self._site_id}/lists/{self._list_id}/items?$select=id"
-            item_ids = []
-            while url:
+        # 1️⃣ Obtener todos los IDs
+        url = f"{GRAPH_BASE}/sites/{self._site_id}/lists/{self._list_id}/items?$select=id"
+        item_ids = []
+        while url:
+            async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=headers) as response:
                     if response.status == 429:
                         retry_after = int(response.headers.get("Retry-After", base_delay))
@@ -113,11 +123,22 @@ class SharePointService:
                     item_ids.extend([item["id"] for item in items])
                     url = data.get("@odata.nextLink")
 
-            self.log_fn(f"🔎 Total elementos a eliminar: {len(item_ids)}")
-            batches = [item_ids[i:i+20] for i in range(0, len(item_ids), 20)]
-            sem = asyncio.Semaphore(max_concurrent)
+        total = len(item_ids)
+        self.log_fn(f"🔎 Total elementos a eliminar: {total}")
+
+        if total == 0:
+            self.log_fn("ℹ️ No hay elementos para borrar.")
+            return True
+
+        # 2️⃣ Preparar batches
+        batches = [item_ids[i:i+20] for i in range(0, total, 20)]
+        sem = asyncio.Semaphore(max_concurrent)
+        deleted_count = 0
+
+        async with aiohttp.ClientSession() as session:
 
             async def delete_batch(batch, batch_index):
+                nonlocal deleted_count
                 async with sem:
                     requests_batch = {
                         "requests": [
@@ -139,27 +160,26 @@ class SharePointService:
                                 await asyncio.sleep(retry_after)
                                 continue
                             elif response.status == 200:
-                                self.log_fn(f"✔️ Batch {batch_index}: Eliminados {len(batch)} elementos")
-                                await asyncio.sleep(base_delay)  # pausa entre lotes
+                                deleted_count += len(batch)
+                                self.log_fn(f"✔️ Batch {batch_index}: Eliminados {len(batch)} elementos ({deleted_count}/{total})")
+                                if progress_cb:
+                                    progress_cb(deleted_count, total)
+                                await asyncio.sleep(base_delay)
                                 return True
                             else:
                                 error_text = await response.text()
-                                self.log_fn(f"⚠️ Batch {batch_index}: Error {response.status} - {error_text}. "
-                                            f"Reintento {attempt}/{max_retries} en {delay}s")
+                                self.log_fn(f"⚠️ Batch {batch_index}: Error {response.status} - {error_text}. Reintento {attempt}/{max_retries} en {delay}s")
                                 await asyncio.sleep(delay)
                                 delay *= 2  # backoff exponencial
 
                     self.log_fn(f"❌ Batch {batch_index} falló tras {max_retries} intentos")
                     return False
 
-            results = []
-            for idx, batch in enumerate(batches):
-                result = await delete_batch(batch, idx)
-                results.append(result)
-
+            results = await asyncio.gather(*(delete_batch(batch, idx) for idx, batch in enumerate(batches)))
             ok = all(results)
-            self.log_fn("✅ Borrado completado." if ok else "⚠️ Borrado completado con errores.")
-            return ok
+
+        self.log_fn("✅ Borrado completado." if ok else f"⚠️ Borrado incompleto: {deleted_count}/{total} elementos eliminados")
+        return ok
 
     def is_list_empty(self) -> bool:
         """Verifica si la lista de SharePoint está vacía."""
@@ -176,22 +196,22 @@ class SharePointService:
         - 'replace': elimina TODOS los elementos y vuelve a insertar todo.
         - 'update' : NO elimina; inserta SOLO los nuevos (Title único).
         """
-        def safe_batch_delete(requests_batch, max_retries=3, delay=2):
-            for attempt in range(max_retries):
-                batch_response, err, status, _ = self.client._make_request(
-                    "POST",
-                    f"{GRAPH_BASE}/$batch",
-                    json=requests_batch
-                )
-                if not err:
-                    return batch_response, None
-                else:
-                    self.log_fn(f"⚠️ Error en intento {attempt + 1} de batch delete: {err}")
-                    time.sleep(delay * (attempt + 1))  # espera progresiva
-            return None, err
+        import asyncio, time
 
+        def run_async(coro):
+            """Ejecuta una corrutina sin romper si ya hay loop activo."""
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = None
 
-        # ---- Logs iniciales y guardas defensivas (tuyas) ----
+            if loop and loop.is_running():
+                # ya hay loop activo (ej. FastAPI, Flet, Jupyter)
+                return asyncio.ensure_future(coro)
+            else:
+                return asyncio.run(coro)
+
+        # ---- Logs iniciales y guardas defensivas ----
         self.log_fn(f"🔎 sync_data recibe tipo: {type(rows)} con len={len(rows) if rows is not None else 'NA'}; mode={mode}")
 
         if isinstance(rows, list) and rows:
@@ -210,7 +230,6 @@ class SharePointService:
             self.log_fn("❌ No hay mapa de columnas; no se puede continuar.")
             return False
 
-        # Guardas defensivas (tuyas)
         if not isinstance(rows, list):
             self.log_fn(f"❌ Esperaba lista de dicts; recibí {type(rows)} -> {repr(rows)[:200]}")
             return False
@@ -220,30 +239,33 @@ class SharePointService:
 
         mapped_rows = self._map_rows_to_internal(rows, col_map)
 
-        # 🔍 Validación extra (tuyas): muestra las primeras 3 filas mapeadas
+        # 🔍 Debug: primeras filas mapeadas
         for i, row in enumerate(mapped_rows[:3]):
             self.log_fn(f"   [DEBUG] mapped_rows[{i}] = {type(row)} -> {row}")
 
         # ------------------------------
         # MODO REPLACE: BORRA + INSERTA
         # ------------------------------
-
         if mode == "replace":
-            self.log_fn("🔄 Iniciando borrado de elementos de la lista (modo paralelo)...")
-            asyncio.run(self.delete_all_items_async())
+            self.log_fn("🔄 Iniciando borrado de elementos de la lista (modo REPLACE)...")
 
-            # --- Inserción batch (todo) ---
-            self.log_fn("🔄 Iniciando inserción de nuevos elementos en la lista (REPLACE)...")
-            insert_dataframe_in_batches_async(
-                self.client,
+            # Callback opcional para progreso
+            def delete_progress(deleted, total):
+                self.log_fn(f"⏳ Progreso borrado: {deleted}/{total}")
+
+            # Ejecutar borrado de manera segura en cualquier loop
+            run_async(self.delete_all_items_async(progress_cb=delete_progress))
+
+            self.log_fn("🔄 Iniciando inserción de nuevos elementos en la lista (CREAR LISTA)...")
+            run_async(insert_dataframe_in_batches_async(
+                self.client.token,
                 self._site_id,
                 self._list_id,
                 mapped_rows,
                 log=self.log_fn,
                 batch_size=20
-            )
+            ))
 
-            # --- Verificación: contar items (tu verificación) ---
             new_count = self.client.get_list_item_count(self._site_id, self._list_id)
             if new_count != -1:
                 self.log_fn(f"📈 La lista ahora contiene {new_count} elementos.")
@@ -255,15 +277,12 @@ class SharePointService:
         # MODO UPDATE: SÓLO INSERTAR
         # ---------------------------
         elif mode == "update":
-            # Conteo antes de insertar (para verificar al final)
             before_count = self.client.get_list_item_count(self._site_id, self._list_id)
             self.log_fn(f"📦 Modo UPDATE: conteo actual = {before_count}")
 
-            # Cargar títulos existentes
             existing_titles = self.get_existing_titles()
             self.log_fn(f"🔎 Títulos existentes: {len(existing_titles)}")
 
-            # Filtrar SOLO nuevos por Title (y evita duplicados en el propio lote)
             seen = set()
             new_rows = []
             for r in mapped_rows:
@@ -284,18 +303,16 @@ class SharePointService:
                 self.log_fn("ℹ️ No hay registros nuevos para insertar (Title ya existentes).")
                 return True
 
-            # Inserción batch SOLO de los nuevos
             self.log_fn("🔄 Iniciando inserción de NUEVOS elementos (UPDATE)...")
-            insert_dataframe_in_batches_async(
-                self.client,
+            run_async(insert_dataframe_in_batches_async(
+                self.client.token,
                 self._site_id,
                 self._list_id,
                 new_rows,
                 log=self.log_fn,
                 batch_size=20
-            )
+            ))
 
-            # Verificación por conteo: después de insertar
             after_count = self.client.get_list_item_count(self._site_id, self._list_id)
             self.log_fn(f"📈 Conteo tras UPDATE: {after_count} (antes {before_count})")
             if before_count != -1 and after_count != -1:
@@ -649,6 +666,7 @@ async def insert_dataframe_in_batches_async(
     }
 
     total = len(rows)
+    log(f"📦 insert_dataframe_in_batches_async: {total} registros a insertar en batches de {batch_size}")
     inserted = 0
     batches = [rows[i:i+batch_size] for i in range(0, total, batch_size)]
     sem = asyncio.Semaphore(max_concurrent)
