@@ -6,6 +6,7 @@ from datetime import datetime
 from tkinter import messagebox
 from config import COLORS
 from services.sharepoint_service import SharePointService
+from ui.components.dialogs import SharePointDialog
 
 
 class SharePointManager:
@@ -53,26 +54,59 @@ class SharePointManager:
     def sync_to_sharepoint(self):
         """Initialize SharePoint sync process"""
 
+        if not self.app.class_data:
+            messagebox.showinfo("Sin datos", "Por favor, genera primero el calendario de clases")
+            return
+        
         def continue_sync():
-            if not self.app.class_data:
-                messagebox.showinfo("Sin datos", "Por favor, genera primero el calendario de clases")
-                return
-                        
-            answer = messagebox.askyesnocancel(
-                "Sincronizar con SharePoint",
-                "¿Qué deseas hacer?\n\n"
-                "Crear calendario nuevo\n"
-                "Actualizar el calendario\n"
-                "Cancelar"
-            )
-            if answer is None:
-                return  # cancelado por el usuario
+        
+            # Usamos la subclase personalizada con callback
+            def on_dialog_choice(choice):
+                if choice is None:
+                    return  # Cancelado
+                elif choice == "crear":
+                    mode = "replace"
+                elif choice == "actualizar":
+                    mode = "update"
+                else:
+                    return
+                
+                self._perform_sync(mode)
 
-            mode = "replace" if answer is True else "update"
-            self._perform_sync(mode)
+            SharePointDialog(self.app, callback=on_dialog_choice)
+
+    
+
+            # # Usamos la subclase personalizada
+            # dialog = SharePointDialog(self, callback=None)
+            # dialog.wait_window()  # Espera a que el usuario cierre el diálogo
+
+            # if dialog.result is None:
+            #     return  # Cancelado
+            # elif dialog.result == "crear":
+            #     mode = "replace"
+            # elif dialog.result == "actualizar":
+            #     mode = "update"
+            # else:
+            #     return  # seguridad, nunca debería pasar
+                        
+            # # answer = messagebox.askyesnocancel(
+            # #     "Sincronizar con SharePoint",
+            # #     "¿Qué deseas hacer?\n\n"
+            # #     "Crear calendario nuevo\n"
+            # #     "Actualizar el calendario\n"
+            # #     "Cancelar"
+            # # )
+            # # if answer is None:
+            # #     return  # cancelado por el usuario
+
+            # # mode = "replace" if answer is True else "update"
+
+            # self._perform_sync(mode)
 
         # Lanzamos autenticación, y si funciona → ejecuta continue_sync
         self.authenticate(on_success=continue_sync)
+        #continue_sync()
     
     def _perform_sync(self, mode: str):
         """Execute the sync operation in the chosen mode ('replace' or 'update')"""

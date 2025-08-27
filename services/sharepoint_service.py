@@ -13,7 +13,8 @@ import msal
 import webbrowser
 import json
 import asyncio
-import aiohttp  
+import aiohttp
+
 
 from config import (
     SP_CLIENT_ID, 
@@ -411,7 +412,7 @@ class SharePointService:
         self.log_fn(f"🔎 _map_rows_to_internal recibe {len(rows)} filas, primer tipo: {type(rows[0])}")
 
         # Campos de SharePoint que no debemos enviar porque tienen valores por defecto
-        EXCLUDE_FIELDS = {"Estado", "Aviso24h", "Observaciones"}
+        EXCLUDE_FIELDS = {"Asistencia", "Aviso24h", "Observaciones"}
 
         # Campos que en SharePoint son texto aunque en el DataFrame vengan como números
         TEXT_FIELDS = {"PERNR", "Grupo"}

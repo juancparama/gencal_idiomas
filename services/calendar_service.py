@@ -64,7 +64,7 @@ class CalendarService:
                         "Fecha": current.strftime("%Y-%m-%d"),
                         "Grupo": r["Grupo"],
                         "Idioma": r["Idioma"],
-                        "Estado": "Pendiente",
+                        "Asistencia": "Pendiente",
                         "Aviso24h": "",
                         "Observaciones": ""
                     })
@@ -76,7 +76,7 @@ class CalendarService:
         df_out = pd.DataFrame(
             rows,
             columns=["Title", "PERNR", "Nombre", "Mail", "Fecha",
-                    "Grupo", "Idioma", "Estado", "Aviso24h", "Observaciones"]
+                    "Grupo", "Idioma", "Asistencia", "Aviso24h", "Observaciones"]
         )
 
         return df_out
